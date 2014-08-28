@@ -1,0 +1,8 @@
+PyYAML==3.11
+SQLAlchemy==0.9.7
+Twisted==14.0.0
+py==1.4.23
+stompest==2.1.4
+stompest.async==2.1.4
+wsgiref==0.1.2
+zope.interface==4.1.1

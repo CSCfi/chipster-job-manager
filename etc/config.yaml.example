@@ -1,0 +1,6 @@
+debug: True
+database_dialect: "sqlite"
+database_connect_string: "/db.sqlite"
+stomp_endpoint: "tcp://127.0.0.1:61613"
+stomp_login: "loginname"
+stomp_password: "password"
