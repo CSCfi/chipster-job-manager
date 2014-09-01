@@ -76,6 +76,12 @@ def populate_job_running_body(job_id):
                               {"string": ["exitState", "RUNNING"]}]}}
 
 
+def populate_job_result_body(job_id):
+    return {'map': {'entry': [{'null': '', 'string': 'errorMessage'},
+                              {'string': ['jobId', job_id]},
+                              {'string': ['exitState', 'ERROR']}]}}
+
+
 def msg_type_from_headers(headers):
     if headers.get('class') == JOB_MESSAGE:
         return 'JobMessage'

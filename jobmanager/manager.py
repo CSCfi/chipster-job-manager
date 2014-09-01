@@ -14,14 +14,15 @@ from stompest.async.listener import (SubscriptionListener, ErrorListener,
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
-from models import (Base, add_job, get_job, get_jobs, update_job_as,
+from models import (Base, JobNotFound,
+                    add_job, get_job, get_jobs, update_job_as,
                     update_job_results, update_job_running,
                     update_job_rescheduled, update_job_reply_to)
 from utils import (parse_msg_body, msg_type_from_headers,
                    populate_comp_status_body, populate_headers,
                    populate_comp_status_headers, populate_msg_body,
-                   populate_job_running_body, CMD_MESSAGE,
-                   RESULT_MESSAGE)
+                   populate_job_running_body, populate_job_result_body,
+                   CMD_MESSAGE, RESULT_MESSAGE)
 
 PERIODIC_CHECK_INTERVAL = 5.0
 JOB_DEAD_AFTER = 30
@@ -130,24 +131,20 @@ class JobManager(object):
         if command == 'offer':
             job = get_job(self.session, job_id)
             now = datetime.datetime.utcnow()
-
-            # If job has already a selecter analysis server,
-            # this a response message for reschedule request
-            if job.selected_as or ((now - job.created).total_seconds() > JOB_DEAD_AFTER):
+            schedule_job = False
+            if not job.submitted:  # New job, never submitted before
+                schedule_job = True
+            elif (now - job.created).total_seconds() > JOB_DEAD_AFTER and not job.seen:  # Job has never reported by any analysis server
+                schedule_job = True
+            elif (now - job.seen).total_seconds() > JOB_DEAD_AFTER:  # The job has not recently been reported by any analysis server
+                schedule_job = True
+            if schedule_job:
                 job_id = job.job_id
                 as_id = msg.get('as-id')
                 update_job_as(self.session, job_id, as_id)
                 body = populate_msg_body('choose', as_id, job_id)
                 headers = populate_headers(self.COMP_TOPIC, CMD_MESSAGE, session_id=job.session_id, reply_to=self.SHADOW_TOPIC)
                 self.send_to(self.COMP_TOPIC, headers, body=json.dumps(body))
-            else:
-                try:
-                    client_topic = self.resolve_reply_to(msg)
-                    self.send_to(client_topic, headers, frame.body, reply_to=self.SHADOW_TOPIC)
-                except ReplyToResolutionException:
-                    logging.warn("XXX: unable to resolve reply_to address for offer")
-                except Exception as e:
-                    logging.warn(e)
         else:
             self.send_to(job.reply_to, headers, frame.body)
 
@@ -165,19 +162,21 @@ class JobManager(object):
             self.send_to(self.COMP_TOPIC, headers, json.dumps(body), reply_to=self.SHADOW_TOPIC)
         elif command == 'get-job':
             client_topic = headers.get('reply-to')
-            job = get_job(self.session, msg.get('job-id'))
+            job_id = msg.get('job-id')
+            try:
+                job = get_job(self.session, job_id)
+            except JobNotFound:
+                job = None
+            headers = populate_headers(client_topic, RESULT_MESSAGE)
             if job:
                 update_job_reply_to(self.session, job_id, client_topic)
-                body = populate_msg_body('offer', job.selected_as, job_id)
-                headers = populate_headers(client_topic, CMD_MESSAGE)
-                self.send_to(client_topic, headers, json.dumps(body))
-
-                headers = populate_headers(client_topic, RESULT_MESSAGE)
                 if job.results:
                     resp_body = job.results
                 else:
                     resp_body = json.dumps(populate_job_running_body(job.job_id))
-                self.send_to(client_topic, headers, resp_body)
+            else:
+                resp_body = populate_job_result_body(job_id)
+            self.send_to(client_topic, headers, resp_body)
         else:
             self.send_to(self.COMP_TOPIC, headers, frame.body)
 
