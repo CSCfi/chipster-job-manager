@@ -30,7 +30,7 @@ class Job(Base):
     finished = Column(DateTime)
     seen = Column(DateTime)
 
-    selected_as = Column(String(length=40))
+    comp_id = Column(String(length=40))
 
 
 def get_jobs(session, include_finished=False):
@@ -61,14 +61,14 @@ def add_job(session, job_id, description, headers, session_id, reply_to=None):
     return job
 
 
-def update_job_as(session, job_id, as_id):
+def update_job_as(session, job_id, comp_id):
     job = session.query(Job).filter(Job.job_id == job_id).first()
     if not job:
         raise JobNotFound(job_id)
     if job.results:
         raise ValueError('cannot modify finished job: %s' % job_id)
     job.submitted = datetime.datetime.utcnow()
-    job.selected_as = as_id
+    job.comp_id = comp_id
     session.merge(job)
     session.commit()
     return job
@@ -89,7 +89,7 @@ def update_job_results(session, job_id, results):
     if not job:
         raise JobNotFound(job_id)
 
-    if not job.selected_as:
+    if not job.comp_id:
         raise ValueError('cannot add results to job with no as_id' % job_id)
 
     job.finished = datetime.datetime.utcnow()
@@ -118,6 +118,18 @@ def update_job_rescheduled(session, job_id):
     job.rescheduled = datetime.datetime.utcnow()
     job.submitted = None
     job.seen = None
+    session.merge(job)
+    session.commit()
+    return job
+
+
+def update_job_cancelled(session, job_id):
+    job = session.query(Job).filter(Job.job_id == job_id).first()
+    if not job:
+        raise JobNotFound(job_id)
+    if job.finished:
+        raise RuntimeError("cannot cancel completed job")
+    job.finished = datetime.datetime.utcnow()
     session.merge(job)
     session.commit()
     return job

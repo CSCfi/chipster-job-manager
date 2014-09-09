@@ -17,7 +17,8 @@ from sqlalchemy.orm import sessionmaker
 from models import (Base, JobNotFound,
                     add_job, get_job, get_jobs, update_job_as,
                     update_job_results, update_job_running,
-                    update_job_rescheduled, update_job_reply_to)
+                    update_job_rescheduled, update_job_reply_to,
+                    update_job_cancelled)
 from utils import (parse_msg_body, msg_type_from_headers,
                    populate_comp_status_body, populate_headers,
                    populate_comp_status_headers, populate_msg_body,
@@ -47,7 +48,7 @@ def listeners():
 class JobManager(object):
     CLIENT_TOPIC = u'/topic/authorised-request-topic'
     COMP_TOPIC = u'/topic/authorized-managed-request-topic'
-    SHADOW_TOPIC = u'/topic/test-topic'
+    JOBMANAGER_TOPIC = u'/topic/test-topic'
     COMP_ADMIN_TOPIC = u'/topic/comp-admin-topic'
 
     def __init__(self, session, config=None):
@@ -67,7 +68,7 @@ class JobManager(object):
         }
         self.client.subscribe(self.CLIENT_TOPIC, headers,
                               listener=SubscriptionListener(self.processClientMessage, ack=False))
-        self.client.subscribe(self.SHADOW_TOPIC, headers,
+        self.client.subscribe(self.JOBMANAGER_TOPIC, headers,
                               listener=SubscriptionListener(self.processCompMessage, ack=False))
 
     def processClientMessage(self, client, frame):
@@ -80,11 +81,11 @@ class JobManager(object):
                 topic_name = headers['reply-to'].split('/')[-1]
                 reply_to = '/remote-temp-topic/%s' % topic_name
                 add_job(self.session, body.get('jobID'), frame.body, json.dumps(frame.headers), headers['session-id'], reply_to=reply_to)
-                self.send_to(self.COMP_TOPIC, headers, json.dumps(frame_body), reply_to=self.SHADOW_TOPIC)
+                self.send_to(self.COMP_TOPIC, headers, json.dumps(frame_body), reply_to=self.JOBMANAGER_TOPIC)
             elif msg_type == 'CmdMessage':
                 self.handle_client_cmd_msg(frame, body)
             else:
-                self.send_to(self.COMP_TOPIC, headers, frame.body, reply_to=self.SHADOW_TOPIC)
+                self.send_to(self.COMP_TOPIC, headers, frame.body, reply_to=self.JOBMANAGER_TOPIC)
         except:
             import traceback
             traceback.print_exc()
@@ -143,7 +144,7 @@ class JobManager(object):
                 as_id = msg.get('as-id')
                 update_job_as(self.session, job_id, as_id)
                 body = populate_msg_body('choose', as_id, job_id)
-                headers = populate_headers(self.COMP_TOPIC, CMD_MESSAGE, session_id=job.session_id, reply_to=self.SHADOW_TOPIC)
+                headers = populate_headers(self.COMP_TOPIC, CMD_MESSAGE, session_id=job.session_id, reply_to=self.JOBMANAGER_TOPIC)
                 self.send_to(self.COMP_TOPIC, headers, body=json.dumps(body))
         else:
             self.send_to(job.reply_to, headers, frame.body)
@@ -152,31 +153,26 @@ class JobManager(object):
         command = msg.get('command')
         headers = frame.headers
         job_id = msg.get('job-id')
-        if command == 'choose':
-            as_id = msg.get('as-id')
-            job = get_job(self.session, job_id)
-            if job.finished:  # XXX: Currently Chipster client must receive an offer message and sent a choose message
-                return        # XXX: before result message can be processed. Remove when client is refactored and JobManager handles all offer and choose messages
-            update_job_as(self.session, job_id, as_id)
-            body = populate_msg_body('choose', as_id, job_id)
-            self.send_to(self.COMP_TOPIC, headers, json.dumps(body), reply_to=self.SHADOW_TOPIC)
-        elif command == 'get-job':
+        if command == 'get-job':
             client_topic = headers.get('reply-to')
             job_id = msg.get('job-id')
-            try:
-                job = get_job(self.session, job_id)
-            except JobNotFound:
-                job = None
             headers = populate_headers(client_topic, RESULT_MESSAGE)
-            if job:
-                update_job_reply_to(self.session, job_id, client_topic)
+            try:
+                job = update_job_reply_to(self.session, job_id, client_topic)
                 if job.results:
                     resp_body = job.results
                 else:
                     resp_body = json.dumps(populate_job_running_body(job.job_id))
-            else:
+            except JobNotFound:
                 resp_body = populate_job_result_body(job_id)
             self.send_to(client_topic, headers, resp_body)
+        elif command == 'cancel':
+            job_id = msg.get('parameter0')
+            try:
+                update_job_cancelled(self.session, job_id)
+            except JobNotFound:
+                logging.warn("trying to cancel a non-existing job")
+            self.send_to(self.COMP_TOPIC, headers, frame.body)
         else:
             self.send_to(self.COMP_TOPIC, headers, frame.body)
 
@@ -200,21 +196,21 @@ class JobManager(object):
         job = get_job(session, job_id)
         # headers = populate_headers(self.COMP_TOPIC,
         #                           u'fi.csc.microarray.messaging.message.JobMessage',
-        #                           reply_to=self.SHADOW_TOPIC)
+        #                           reply_to=self.JOBMANAGER_TOPIC)
         headers = json.loads(job.headers)
-        # headers['reply-to'] = self.SHADOW_TOPIC
+        # headers['reply-to'] = self.JOBMANAGER_TOPIC
         # logging.info("Sending headers: %s" % headers)
         # logging.info("Sending body: %s" % job.description)
 
-        self.send_to(self.COMP_TOPIC, headers, job.description, reply_to=self.SHADOW_TOPIC)
+        self.send_to(self.COMP_TOPIC, headers, job.description, reply_to=self.JOBMANAGER_TOPIC)
         update_job_rescheduled(session, job_id)
 
     def run_periodic_checks(self, session):
         if self.client:
-            status_headers = populate_comp_status_headers(self.SHADOW_TOPIC)
+            status_headers = populate_comp_status_headers(self.JOBMANAGER_TOPIC)
             status_body = populate_comp_status_body('get-comp-status')
             self.send_to(self.COMP_ADMIN_TOPIC, status_headers, json.dumps(status_body))
-            jobs_headers = populate_comp_status_headers(self.SHADOW_TOPIC)
+            jobs_headers = populate_comp_status_headers(self.JOBMANAGER_TOPIC)
             jobs_body = populate_comp_status_body('get-running-jobs')
             self.send_to(self.COMP_ADMIN_TOPIC, jobs_headers, json.dumps(jobs_body))
             self.check_stalled_jobs(session)
