@@ -15,7 +15,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from models import (Base, JobNotFound,
-                    add_job, get_job, get_jobs, update_job_as,
+                    add_job, get_job, get_jobs, update_job_comp,
                     update_job_results, update_job_running,
                     update_job_rescheduled, update_job_reply_to,
                     update_job_cancelled)
@@ -143,10 +143,11 @@ class JobManager(object):
                 schedule_job = True
             elif (now - job.seen).total_seconds() > JOB_DEAD_AFTER:  # The job has not recently been reported by any analysis server
                 schedule_job = True
+
             if schedule_job:
                 job_id = job.job_id
                 as_id = msg.get('as-id')
-                update_job_as(self.session, job_id, as_id)
+                update_job_comp(self.session, job_id, as_id)
                 body = populate_msg_body('choose', as_id, job_id)
                 headers = populate_headers(TOPICS['comp_topic'], CMD_MESSAGE, session_id=job.session_id, reply_to=TOPICS['jobmanager_topic'])
                 self.send_to(TOPICS['comp_topic'], headers, body=json.dumps(body))

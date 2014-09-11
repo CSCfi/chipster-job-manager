@@ -61,7 +61,7 @@ def add_job(session, job_id, description, headers, session_id, reply_to=None):
     return job
 
 
-def update_job_as(session, job_id, comp_id):
+def update_job_comp(session, job_id, comp_id):
     job = session.query(Job).filter(Job.job_id == job_id).first()
     if not job:
         raise JobNotFound(job_id)
@@ -116,7 +116,7 @@ def update_job_rescheduled(session, job_id):
     if job.finished:
         raise RuntimeError("cannot reschedule finished job")
     job.rescheduled = datetime.datetime.utcnow()
-    job.submitted = None
+    job.submitted = job.rescheduled
     job.seen = None
     session.merge(job)
     session.commit()
