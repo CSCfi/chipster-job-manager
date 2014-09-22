@@ -2,6 +2,7 @@ import argparse
 import json
 import yaml
 import logging
+from logging import FileHandler
 import datetime
 
 from twisted.internet import reactor, defer, task
@@ -252,10 +253,15 @@ def config_to_db_session(config, Base):
 def main():
     logging.basicConfig()
     logging.getLogger().setLevel(logging.INFO)
+
     parser = argparse.ArgumentParser()
     parser.add_argument('config_file')
     parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--logfile')
     args = parser.parse_args()
+
+    if args.logfile:
+        logging.getLogger().addHandler(FileHandler(args.logfile))
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
