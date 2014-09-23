@@ -165,8 +165,10 @@ class JobManager(object):
             headers = populate_headers(client_topic, RESULT_MESSAGE)
             try:
                 job = update_job_reply_to(self.session, job_id, client_topic)
-                if job.results:
+                if job.finished and job.results:
                     resp_body = job.results
+                elif job.finished:
+                    resp_body = populate_job_result_body(job_id, exit_state='CANCELLED')
                 else:
                     resp_body = json.dumps(populate_job_running_body(job.job_id))
             except JobNotFound:

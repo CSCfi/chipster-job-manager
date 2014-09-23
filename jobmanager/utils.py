@@ -76,10 +76,10 @@ def populate_job_running_body(job_id):
                               {"string": ["exitState", "RUNNING"]}]}}
 
 
-def populate_job_result_body(job_id):
+def populate_job_result_body(job_id, exit_state='ERROR'):
     return {'map': {'entry': [{'null': '', 'string': 'errorMessage'},
                               {'string': ['jobId', job_id]},
-                              {'string': ['exitState', 'ERROR']}]}}
+                              {'string': ['exitState', exit_state]}]}}
 
 
 def msg_type_from_headers(headers):
