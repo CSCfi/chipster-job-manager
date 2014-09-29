@@ -44,9 +44,11 @@ class ReplyToResolutionException(Exception):
 class JobManagerErrorLister(ErrorListener):
     def onError(self, connection, frame):
         logging.warn("JM AMQ Connection Error")
+        reactor.callFromThread(reactor.stop)
 
     def onConnectionLost(self, connection, reason):
         logging.warn("JM AMQ Connection Lost")
+        reactor.callFromThread(reactor.stop)
 
 
 def listeners():
@@ -172,7 +174,12 @@ class JobManager(object):
                 else:
                     resp_body = json.dumps(populate_job_running_body(job.job_id))
             except JobNotFound:
+                logging.info("job %s not found" % job_id)
                 resp_body = populate_job_result_body(job_id)
+            except Exception as e:
+                logging.info(e)
+                return
+
             self.send_to(client_topic, headers, resp_body)
         elif command == 'cancel':
             job_id = msg.get('parameter0')
