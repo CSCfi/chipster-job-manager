@@ -66,7 +66,10 @@ class JobManager(object):
 
     @defer.inlineCallbacks
     def run(self):
-        self.client = yield Stomp(self.config, listenersFactory=listeners).connect()
+        try:
+            self.client = yield Stomp(self.config, listenersFactory=listeners).connect()
+        except:
+            reactor.stop()
         headers = {
             StompSpec.ACK_HEADER: StompSpec.ACK_CLIENT_INDIVIDUAL,
             'ack': 'auto',
