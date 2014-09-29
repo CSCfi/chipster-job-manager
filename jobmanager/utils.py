@@ -73,11 +73,13 @@ def populate_comp_status_body(command):
 
 def populate_job_running_body(job_id):
     return {"map": {"entry": [{"string": ["jobId", job_id]},
+                              {"string":"heartbeat","boolean":"true"},
                               {"string": ["exitState", "RUNNING"]}]}}
 
 
 def populate_job_result_body(job_id, exit_state='ERROR'):
     return {'map': {'entry': [{'null': '', 'string': 'errorMessage'},
+                              {"string":"heartbeat","boolean":"true"},
                               {'string': ['jobId', job_id]},
                               {'string': ['exitState', exit_state]}]}}
 
