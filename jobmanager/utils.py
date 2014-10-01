@@ -1,5 +1,7 @@
 import time
 import uuid
+from contextlib import contextmanager
+
 
 JOB_MESSAGE = 'fi.csc.microarray.messaging.message.JobMessage'
 CMD_MESSAGE = 'fi.csc.microarray.messaging.message.CommandMessage'
@@ -82,6 +84,20 @@ def populate_job_result_body(job_id, exit_state='ERROR'):
                               {"string":"heartbeat","boolean":"true"},
                               {'string': ['jobId', job_id]},
                               {'string': ['exitState', exit_state]}]}}
+
+
+@contextmanager
+def session_scope(sessionmaker):
+     session = sessionmaker()
+     try:
+         yield session
+         session.commit()
+     except:
+         session.rollback()
+         raise
+     finally:
+         session.expunge_all()
+         session.close()
 
 
 def msg_type_from_headers(headers):

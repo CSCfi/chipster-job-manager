@@ -4,6 +4,9 @@ from sqlalchemy import (Column, Integer, String, Text,
                         DateTime)
 from sqlalchemy.ext.declarative import declarative_base
 
+from jobmanager.utils import session_scope
+
+
 Base = declarative_base()
 
 
@@ -32,22 +35,26 @@ class Job(Base):
 
     comp_id = Column(String(length=40))
 
+    def __unicode__(self):
+        return '<Job:%s>' % job_id
 
-def get_jobs(session, include_finished=False):
-    if include_finished:
-        return session.query(Job).all()
-    else:
-        return session.query(Job).filter(Job.finished == None)
+def get_jobs(sessionmaker, include_finished=False):
+    with session_scope(sessionmaker) as session:
+        if include_finished:
+            return session.query(Job).all()
+        else:
+            return session.query(Job).filter(Job.finished == None)
 
 
-def get_job(session, job_id):
-    job = session.query(Job).filter(Job.job_id == job_id).first()
-    if not job:
-        raise JobNotFound(job_id)
+def get_job(sessionmaker, job_id):
+    with session_scope(sessionmaker) as session:
+        job = session.query(Job).filter(Job.job_id == job_id).first()
+        if not job:
+            raise JobNotFound(job_id)
     return job
 
 
-def add_job(session, job_id, description, headers, session_id, reply_to=None):
+def add_job(sessionmaker, job_id, description, headers, session_id, reply_to=None):
     desc = {}
     desc['job_id'] = job_id
     desc['description'] = description
@@ -56,80 +63,80 @@ def add_job(session, job_id, description, headers, session_id, reply_to=None):
     desc['reply_to'] = reply_to
     desc['session_id'] = session_id
     job = Job(**desc)
-    session.add(job)
-    session.commit()
+    with session_scope(sessionmaker) as session:
+        session.add(job)
     return job
 
 
-def update_job_comp(session, job_id, comp_id):
-    job = session.query(Job).filter(Job.job_id == job_id).first()
-    if not job:
-        raise JobNotFound(job_id)
-    if job.results:
-        raise ValueError('cannot modify finished job: %s' % job_id)
-    job.submitted = datetime.datetime.utcnow()
-    job.comp_id = comp_id
-    session.merge(job)
-    session.commit()
+def update_job_comp(sessionmaker, job_id, comp_id):
+    with session_scope(sessionmaker) as session:
+        job = session.query(Job).filter(Job.job_id == job_id).first()
+        if not job:
+            raise JobNotFound(job_id)
+        if job.results:
+            raise ValueError('cannot modify finished job: %s' % job_id)
+        job.submitted = datetime.datetime.utcnow()
+        job.comp_id = comp_id
+        session.merge(job)
     return job
 
 
-def update_job_reply_to(session, job_id, reply_to):
-    job = session.query(Job).filter(Job.job_id == job_id).first()
-    if not job:
-        raise JobNotFound(job_id)
-    job.reply_to = reply_to
-    session.merge(job)
-    session.commit()
+def update_job_reply_to(sessionmaker, job_id, reply_to):
+    with session_scope(sessionmaker) as session:
+        job = session.query(Job).filter(Job.job_id == job_id).first()
+        if not job:
+            raise JobNotFound(job_id)
+        job.reply_to = reply_to
+        session.merge(job)
     return job
 
 
-def update_job_results(session, job_id, results):
-    job = session.query(Job).filter(Job.job_id == job_id).first()
-    if not job:
-        raise JobNotFound(job_id)
+def update_job_results(sessionmaker, job_id, results):
+    with session_scope(sessionmaker) as session:
+        job = session.query(Job).filter(Job.job_id == job_id).first()
+        if not job:
+            raise JobNotFound(job_id)
 
-    if not job.comp_id:
-        raise ValueError('cannot add results to job with no as_id' % job_id)
+        if not job.comp_id:
+            raise ValueError('cannot add results to job with no as_id' % job_id)
 
-    job.finished = datetime.datetime.utcnow()
-    job.results = results
-    session.merge(job)
-    session.commit()
+        job.finished = datetime.datetime.utcnow()
+        job.results = results
+        session.merge(job)
     return job
 
 
-def update_job_running(session, job_id):
-    job = session.query(Job).filter(Job.job_id == job_id).first()
-    if not job:
-        raise JobNotFound(job_id)
-    job.seen = datetime.datetime.utcnow()
-    session.merge(job)
-    session.commit()
+def update_job_running(sessionmaker, job_id):
+    with session_scope(sessionmaker) as session:
+        job = session.query(Job).filter(Job.job_id == job_id).first()
+        if not job:
+            raise JobNotFound(job_id)
+        job.seen = datetime.datetime.utcnow()
+        session.merge(job)
     return job
 
 
-def update_job_rescheduled(session, job_id):
-    job = session.query(Job).filter(Job.job_id == job_id).first()
-    if not job:
-        raise JobNotFound(job_id)
-    if job.finished:
-        raise RuntimeError("cannot reschedule finished job")
-    job.rescheduled = datetime.datetime.utcnow()
-    job.submitted = job.rescheduled
-    job.seen = None
-    session.merge(job)
-    session.commit()
+def update_job_rescheduled(sessionmaker, job_id):
+    with session_scope(sessionmaker) as session:
+        job = session.query(Job).filter(Job.job_id == job_id).first()
+        if not job:
+            raise JobNotFound(job_id)
+        if job.finished:
+            raise RuntimeError("cannot reschedule finished job")
+        job.rescheduled = datetime.datetime.utcnow()
+        job.submitted = job.rescheduled
+        job.seen = None
+        session.merge(job)
     return job
 
 
-def update_job_cancelled(session, job_id):
-    job = session.query(Job).filter(Job.job_id == job_id).first()
-    if not job:
-        raise JobNotFound(job_id)
-    if job.finished:
-        raise RuntimeError("cannot cancel completed job")
-    job.finished = datetime.datetime.utcnow()
-    session.merge(job)
-    session.commit()
+def update_job_cancelled(sessionmaker, job_id):
+    with session_scope(sessionmaker) as session:
+        job = session.query(Job).filter(Job.job_id == job_id).first()
+        if not job:
+            raise JobNotFound(job_id)
+        if job.finished:
+            raise RuntimeError("cannot cancel completed job")
+        job.finished = datetime.datetime.utcnow()
+        session.merge(job)
     return job

@@ -42,10 +42,11 @@ class ReplyToResolutionException(Exception):
 
 
 class JobManagerErrorLister(ErrorListener):
+    # E.g. trying to send to disconnected client
     def onError(self, connection, frame):
         logging.warn("JM AMQ Connection Error")
-        reactor.callFromThread(reactor.stop)
 
+    # E.g. AMQ connection problem
     def onConnectionLost(self, connection, reason):
         logging.warn("JM AMQ Connection Lost")
         reactor.callFromThread(reactor.stop)
@@ -57,9 +58,9 @@ def listeners():
 
 class JobManager(object):
 
-    def __init__(self, session, config=None):
+    def __init__(self, sessionmaker, config=None):
         self.client = None
-        self.session = session
+        self.sessionmaker = sessionmaker
         if not config:
             config = StompConfig('tcp://localhost:61613', check=False)
         self.config = config
@@ -89,8 +90,9 @@ class JobManager(object):
             if msg_type == 'JobMessage':
                 topic_name = headers['reply-to'].split('/')[-1]
                 reply_to = '/remote-temp-topic/%s' % topic_name
-                add_job(self.session, body.get('jobID'), frame.body, json.dumps(frame.headers), headers['session-id'], reply_to=reply_to)
+                add_job(self.sessionmaker, body.get('jobID'), frame.body, json.dumps(frame.headers), headers['session-id'], reply_to=reply_to)
                 self.send_to(TOPICS['comp_topic'], headers, json.dumps(frame_body), reply_to=TOPICS['jobmanager_topic'])
+
             elif msg_type == 'CmdMessage':
                 self.handle_client_cmd_msg(frame, body)
             else:
@@ -125,22 +127,22 @@ class JobManager(object):
 
     def handle_result_msg(self, frame, body):
         job_id = body.get('jobId')
-        job = get_job(self.session, job_id)
+        job = get_job(self.sessionmaker, job_id)
         if body.get('exitState') == 'COMPLETED':
             logging.info("results ready for job %s" % job_id)
-            job = update_job_results(self.session, job_id, frame.body)
+            job = update_job_results(self.sessionmaker, job_id, frame.body)
         logging.info("sending results to %s" % job.reply_to)
         self.send_to(job.reply_to, frame.headers, frame.body)
 
     def handle_joblog_msg(self, frame, body):
-        update_job_running(self.session, body.get('jobId'))
+        update_job_running(self.sessionmaker, body.get('jobId'))
 
     def handle_comp_cmd_msg(self, frame, msg):
         headers = frame.headers
         command = msg.get('command')
         job_id = msg.get('job-id')
         if command == 'offer':
-            job = get_job(self.session, job_id)
+            job = get_job(self.sessionmaker, job_id)
             now = datetime.datetime.utcnow()
             schedule_job = False
             if not job.submitted:  # New job, never submitted before
@@ -153,7 +155,7 @@ class JobManager(object):
             if schedule_job:
                 job_id = job.job_id
                 as_id = msg.get('as-id')
-                update_job_comp(self.session, job_id, as_id)
+                update_job_comp(self.sessionmaker, job_id, as_id)
                 body = populate_msg_body('choose', as_id, job_id)
                 headers = populate_headers(TOPICS['comp_topic'], CMD_MESSAGE, session_id=job.session_id, reply_to=TOPICS['jobmanager_topic'])
                 self.send_to(TOPICS['comp_topic'], headers, body=json.dumps(body))
@@ -169,7 +171,7 @@ class JobManager(object):
             job_id = msg.get('job-id')
             headers = populate_headers(client_topic, RESULT_MESSAGE)
             try:
-                job = update_job_reply_to(self.session, job_id, client_topic)
+                job = update_job_reply_to(self.sessionmaker, job_id, client_topic)
                 if job.finished and job.results:
                     resp_body = job.results
                 elif job.finished:
@@ -187,7 +189,7 @@ class JobManager(object):
         elif command == 'cancel':
             job_id = msg.get('parameter0')
             try:
-                update_job_cancelled(self.session, job_id)
+                update_job_cancelled(self.sessionmaker, job_id)
             except JobNotFound:
                 logging.warn("trying to cancel a non-existing job")
             self.send_to(TOPICS['comp_topic'], headers, frame.body)
@@ -205,18 +207,18 @@ class JobManager(object):
 
     def resolve_reply_to(self, body):
         if 'job-id' in body:
-            job = get_job(self.session, body.get('job-id'))
+            job = get_job(self.sessionmaker, body.get('job-id'))
             if job:
                 return job.reply_to
         raise ReplyToResolutionException('Unable to resolve reply_to address')
 
-    def schedule_job(self, session, job_id):
-        job = get_job(session, job_id)
+    def schedule_job(self, job_id):
+        job = get_job(self.sessionmaker, job_id)
         headers = json.loads(job.headers)
         self.send_to(TOPICS['comp_topic'], headers, job.description, reply_to=TOPICS['jobmanager_topic'])
-        update_job_rescheduled(session, job_id)
+        update_job_rescheduled(self.sessionmaker, job_id)
 
-    def run_periodic_checks(self, session):
+    def run_periodic_checks(self):
         if self.client:
             status_headers = populate_comp_status_headers(TOPICS['jobmanager_topic'])
             status_body = populate_comp_status_body('get-comp-status')
@@ -224,27 +226,27 @@ class JobManager(object):
             jobs_headers = populate_comp_status_headers(TOPICS['jobmanager_topic'])
             jobs_body = populate_comp_status_body('get-running-jobs')
             self.send_to(TOPICS['comp_admin_topic'], jobs_headers, json.dumps(jobs_body))
-            self.check_stalled_jobs(session)
+            self.check_stalled_jobs()
 
-    def check_stalled_jobs(self, session):
+    def check_stalled_jobs(self):
         now = datetime.datetime.utcnow()
-        for job in get_jobs(session):
+        for job in get_jobs(self.sessionmaker):
             if job.submitted and job.seen:
                 if (now - job.seen).total_seconds() > JOB_DEAD_AFTER:
                     logging.warn("Job %s seems to be dead, rescheduling job" %
                                  job.job_id)
-                    self.schedule_job(session, job.job_id)
+                    self.schedule_job(job.job_id)
             elif job.submitted and not job.seen:
                 if (now - job.submitted).total_seconds() > JOB_DEAD_AFTER:
                     logging.warn("Job %s is not reported by any analysis "
                                  "server and is not expired, rescheduling "
                                  "job" % job.job_id)
-                    self.schedule_job(session, job.job_id)
+                    self.schedule_job(job.job_id)
             elif job.created and not job.submitted:
                 if (now - job.created).total_seconds() > JOB_DEAD_AFTER:
                     logging.warn("Job %s is not scheduled and is now "
                                  "expired, rescheduling" % job.job_id)
-                    self.schedule_job(session, job.job_id)
+                    self.schedule_job(job.job_id)
 
 
 def config_to_db_session(config, Base):
@@ -259,7 +261,7 @@ def config_to_db_session(config, Base):
             cursor.close()
         event.listen(engine, 'connect', _fk_pragma_on_connect)
     Base.metadata.create_all(bind=engine)
-    return sessionmaker(bind=engine)()
+    return sessionmaker(bind=engine,expire_on_commit = False)
 
 
 def main():
@@ -279,7 +281,7 @@ def main():
         logging.getLogger().setLevel(logging.DEBUG)
 
     config = yaml.load(open(args.config_file))
-    session = config_to_db_session(config, Base)
+    sessionmaker = config_to_db_session(config, Base)
 
     stomp_endpoint = config['stomp_endpoint']
     stomp_login = config['stomp_login']
@@ -290,10 +292,10 @@ def main():
     for topic in ['jobmanager_topic', 'client_topic', 'comp_topic', 'comp_admin_topic']:
         if topic in config:
             TOPICS[topic] = config[topic]
-    jm = JobManager(session, config=stomp_config)
+    jm = JobManager(sessionmaker, config=stomp_config)
     jm.run()
 
-    l = task.LoopingCall(jm.run_periodic_checks, session)
+    l = task.LoopingCall(jm.run_periodic_checks)
     l.start(PERIODIC_CHECK_INTERVAL)
 
     reactor.run()
