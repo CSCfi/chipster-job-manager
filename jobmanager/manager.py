@@ -4,6 +4,7 @@ import yaml
 import logging
 from logging import FileHandler
 import datetime
+from contextlib import contextmanager
 
 from twisted.internet import reactor, defer, task
 
@@ -83,23 +84,15 @@ class JobManager(object):
 
     def processClientMessage(self, client, frame):
         try:
-            frame_body = json.loads(frame.body)
-            body = parse_msg_body(frame_body)
             msg_type = msg_type_from_headers(frame.headers)
-            headers = frame.headers
             if msg_type == 'JobMessage':
-                topic_name = headers['reply-to'].split('/')[-1]
-                reply_to = '/remote-temp-topic/%s' % topic_name
-                add_job(self.sessionmaker, body.get('jobID'), frame.body, json.dumps(frame.headers), headers['session-id'], reply_to=reply_to)
-                self.send_to(TOPICS['comp_topic'], headers, json.dumps(frame_body), reply_to=TOPICS['jobmanager_topic'])
-
+                self.handle_client_job_msg(frame)
             elif msg_type == 'CmdMessage':
-                self.handle_client_cmd_msg(frame, body)
+                self.handle_client_cmd_msg(frame)
             else:
-                self.send_to(TOPICS['comp_topic'], headers, frame.body, reply_to=TOPICS['jobmanager_topic'])
-        except:
-            import traceback
-            traceback.print_exc()
+                self.send_to(TOPICS['comp_topic'], frame.headers, frame.body, reply_to=TOPICS['jobmanager_topic'])
+        except Exception as e:
+            logging.warn(e)
 
     def processCompMessage(self, client, frame):
         frame_body = json.loads(frame.body)
@@ -127,22 +120,28 @@ class JobManager(object):
 
     def handle_result_msg(self, frame, body):
         job_id = body.get('jobId')
-        job = get_job(self.sessionmaker, job_id)
-        if body.get('exitState') == 'COMPLETED':
-            logging.info("results ready for job %s" % job_id)
-            job = update_job_results(self.sessionmaker, job_id, frame.body)
-        logging.info("sending results to %s" % job.reply_to)
+        with self.session_scope() as session:
+            job = get_job(session, job_id)
+            if body.get('exitState') == 'COMPLETED':
+                logging.info("results ready for job %s" % job_id)
+                job = update_job_results(session, job_id, frame.body)
+            elif body.get('exitState') == 'ERROR':
+                logging.info("job %s in error state %s" % (job_id, body))
+                job = update_job_results(session, job_id, frame.body)
+        logging.info("job %s in state %s sending results to %s" % (job_id, body.get('exitState'), job.reply_to))
         self.send_to(job.reply_to, frame.headers, frame.body)
 
     def handle_joblog_msg(self, frame, body):
-        update_job_running(self.sessionmaker, body.get('jobId'))
+        with self.session_scope() as session:
+            update_job_running(session, body.get('jobId'))
 
     def handle_comp_cmd_msg(self, frame, msg):
         headers = frame.headers
         command = msg.get('command')
         job_id = msg.get('job-id')
         if command == 'offer':
-            job = get_job(self.sessionmaker, job_id)
+            with self.session_scope() as session:
+                job = get_job(session, job_id)
             now = datetime.datetime.utcnow()
             schedule_job = False
             if not job.submitted:  # New job, never submitted before
@@ -155,14 +154,26 @@ class JobManager(object):
             if schedule_job:
                 job_id = job.job_id
                 as_id = msg.get('as-id')
-                update_job_comp(self.sessionmaker, job_id, as_id)
+                with self.session_scope() as session:
+                    update_job_comp(session, job_id, as_id)
                 body = populate_msg_body('choose', as_id, job_id)
                 headers = populate_headers(TOPICS['comp_topic'], CMD_MESSAGE, session_id=job.session_id, reply_to=TOPICS['jobmanager_topic'])
                 self.send_to(TOPICS['comp_topic'], headers, body=json.dumps(body))
         else:
             self.send_to(job.reply_to, headers, frame.body)
 
-    def handle_client_cmd_msg(self, frame, msg):
+    def handle_client_job_msg(self, frame):
+        frame_body = json.loads(frame.body)
+        body = parse_msg_body(frame_body)
+        topic_name = frame.headers['reply-to'].split('/')[-1]
+        reply_to = '/remote-temp-topic/%s' % topic_name
+        with self.session_scope() as session:
+            add_job(session, body.get('jobID'), frame.body, json.dumps(frame.headers), frame.headers['session-id'], reply_to=reply_to)
+        self.send_to(TOPICS['comp_topic'], frame.headers, json.dumps(frame_body), reply_to=TOPICS['jobmanager_topic'])
+
+    def handle_client_cmd_msg(self, frame):
+        frame_body = json.loads(frame.body)
+        msg = parse_msg_body(frame_body)
         command = msg.get('command')
         headers = frame.headers
         job_id = msg.get('job-id')
@@ -170,28 +181,26 @@ class JobManager(object):
             client_topic = headers.get('reply-to')
             job_id = msg.get('job-id')
             headers = populate_headers(client_topic, RESULT_MESSAGE)
-            try:
-                job = update_job_reply_to(self.sessionmaker, job_id, client_topic)
-                if job.finished and job.results:
-                    resp_body = job.results
-                elif job.finished:
-                    resp_body = populate_job_result_body(job_id, exit_state='CANCELLED')
-                else:
-                    resp_body = json.dumps(populate_job_running_body(job.job_id))
-            except JobNotFound:
-                logging.info("job %s not found" % job_id)
-                resp_body = populate_job_result_body(job_id)
-            except Exception as e:
-                logging.info(e)
-                return
-
+            with self.session_scope() as session:
+                try:
+                    job = update_job_reply_to(session, job_id, client_topic)
+                    if job.finished and job.results:
+                        resp_body = job.results
+                    elif job.finished:
+                        resp_body = populate_job_result_body(job_id, exit_state='CANCELLED')
+                    else:
+                        resp_body = json.dumps(populate_job_running_body(job.job_id))
+                except JobNotFound:
+                    logging.info("job %s not found" % job_id)
+                    resp_body = populate_job_result_body(job_id)
             self.send_to(client_topic, headers, resp_body)
         elif command == 'cancel':
             job_id = msg.get('parameter0')
-            try:
-                update_job_cancelled(self.sessionmaker, job_id)
-            except JobNotFound:
-                logging.warn("trying to cancel a non-existing job")
+            with self.session_scope() as session:
+                try:
+                    update_job_cancelled(session, job_id)
+                except JobNotFound:
+                    logging.warn("trying to cancel a non-existing job")
             self.send_to(TOPICS['comp_topic'], headers, frame.body)
         else:
             self.send_to(TOPICS['comp_topic'], headers, frame.body)
@@ -207,16 +216,18 @@ class JobManager(object):
 
     def resolve_reply_to(self, body):
         if 'job-id' in body:
-            job = get_job(self.sessionmaker, body.get('job-id'))
-            if job:
-                return job.reply_to
+            with self.session_scope() as session:
+                job = get_job(session, body.get('job-id'))
+                if job:
+                    return job.reply_to
         raise ReplyToResolutionException('Unable to resolve reply_to address')
 
     def schedule_job(self, job_id):
-        job = get_job(self.sessionmaker, job_id)
-        headers = json.loads(job.headers)
-        self.send_to(TOPICS['comp_topic'], headers, job.description, reply_to=TOPICS['jobmanager_topic'])
-        update_job_rescheduled(self.sessionmaker, job_id)
+        with self.session_scope() as session:
+            job = get_job(session, job_id)
+            headers = json.loads(job.headers)
+            self.send_to(TOPICS['comp_topic'], headers, job.description, reply_to=TOPICS['jobmanager_topic'])
+            update_job_rescheduled(session, job_id)
 
     def run_periodic_checks(self):
         if self.client:
@@ -230,23 +241,37 @@ class JobManager(object):
 
     def check_stalled_jobs(self):
         now = datetime.datetime.utcnow()
-        for job in get_jobs(self.sessionmaker):
-            if job.submitted and job.seen:
-                if (now - job.seen).total_seconds() > JOB_DEAD_AFTER:
-                    logging.warn("Job %s seems to be dead, rescheduling job" %
-                                 job.job_id)
-                    self.schedule_job(job.job_id)
-            elif job.submitted and not job.seen:
-                if (now - job.submitted).total_seconds() > JOB_DEAD_AFTER:
-                    logging.warn("Job %s is not reported by any analysis "
-                                 "server and is not expired, rescheduling "
-                                 "job" % job.job_id)
-                    self.schedule_job(job.job_id)
-            elif job.created and not job.submitted:
-                if (now - job.created).total_seconds() > JOB_DEAD_AFTER:
-                    logging.warn("Job %s is not scheduled and is now "
-                                 "expired, rescheduling" % job.job_id)
-                    self.schedule_job(job.job_id)
+        with self.session_scope() as session:
+            for job in get_jobs(session):
+                if job.submitted and job.seen:
+                    if (now - job.seen).total_seconds() > JOB_DEAD_AFTER:
+                        logging.warn("Job %s seems to be dead, rescheduling job" %
+                                     job.job_id)
+                        self.schedule_job(job.job_id)
+                elif job.submitted and not job.seen:
+                    if (now - job.submitted).total_seconds() > JOB_DEAD_AFTER:
+                        logging.warn("Job %s is not reported by any analysis "
+                                     "server and is not expired, rescheduling "
+                                     "job" % job.job_id)
+                        self.schedule_job(job.job_id)
+                elif job.created and not job.submitted:
+                    if (now - job.created).total_seconds() > JOB_DEAD_AFTER:
+                        logging.warn("Job %s is not scheduled and is now "
+                                     "expired, rescheduling" % job.job_id)
+                        self.schedule_job(job.job_id)
+
+    @contextmanager
+    def session_scope(self):
+         session = self.sessionmaker()
+         try:
+             yield session
+             session.commit()
+         except:
+             session.rollback()
+             raise
+         finally:
+             session.expunge_all()
+             session.close()
 
 
 def config_to_db_session(config, Base):
