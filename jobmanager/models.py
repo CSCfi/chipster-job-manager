@@ -4,8 +4,6 @@ from sqlalchemy import (Column, Integer, String, Text,
                         DateTime)
 from sqlalchemy.ext.declarative import declarative_base
 
-from jobmanager.utils import session_scope
-
 
 Base = declarative_base()
 
