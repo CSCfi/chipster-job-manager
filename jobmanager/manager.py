@@ -189,7 +189,7 @@ class JobManager(object):
                     elif job.finished:
                         resp_body = populate_job_result_body(job_id, exit_state='CANCELLED')
                     else:
-                        resp_body = json.dumps(populate_job_running_body(job.job_id))
+                        resp_body = populate_job_running_body(job.job_id)
                 except JobNotFound:
                     logging.info("job %s not found" % job_id)
                     resp_body = populate_job_result_body(job_id)
