@@ -30,6 +30,7 @@ class Job(Base):
     submitted = Column(DateTime)
     finished = Column(DateTime)
     seen = Column(DateTime)
+    retries = Column(Integer, default=0)
 
     comp_id = Column(String(length=40))
 
@@ -115,6 +116,7 @@ def update_job_rescheduled(session, job_id):
         raise RuntimeError("cannot reschedule finished job")
     job.rescheduled = datetime.datetime.utcnow()
     job.submitted = job.rescheduled
+    job.retries = job.retries + 1
     job.seen = None
     session.merge(job)
     return job

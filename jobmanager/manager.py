@@ -28,7 +28,7 @@ from utils import (parse_msg_body, msg_type_from_headers,
                    CMD_MESSAGE, RESULT_MESSAGE)
 
 PERIODIC_CHECK_INTERVAL = 5.0
-JOB_DEAD_AFTER = 30
+JOB_DEAD_AFTER = 60
 
 TOPICS = {
     'client_topic': '/topic/authorised-request-topic',
@@ -128,6 +128,9 @@ class JobManager(object):
             elif body.get('exitState') == 'ERROR':
                 logging.info("job %s in error state %s" % (job_id, body))
                 job = update_job_results(session, job_id, frame.body)
+            elif body.get('exitState') == 'RUNNING':
+                logging.info("heartbeat for job %s" % job_id)
+                job = update_job_running(session, job_id)
         logging.info("job %s in state %s sending results to %s" % (job_id, body.get('exitState'), job.reply_to))
         self.send_to(job.reply_to, frame.headers, frame.body)
 
@@ -245,8 +248,8 @@ class JobManager(object):
             for job in get_jobs(session):
                 if job.submitted and job.seen:
                     if (now - job.seen).total_seconds() > JOB_DEAD_AFTER:
-                        logging.warn("Job %s seems to be dead, rescheduling job" %
-                                     job.job_id)
+                        logging.warn("Job %s seems to be dead (no action for %s seconds), rescheduling job" %
+                                     (job.job_id, (now - job.seen).total_seconds()))
                         self.schedule_job(job.job_id)
                 elif job.submitted and not job.seen:
                     if (now - job.submitted).total_seconds() > JOB_DEAD_AFTER:
@@ -262,16 +265,16 @@ class JobManager(object):
 
     @contextmanager
     def session_scope(self):
-         session = self.sessionmaker()
-         try:
-             yield session
-             session.commit()
-         except:
-             session.rollback()
-             raise
-         finally:
-             session.expunge_all()
-             session.close()
+        session = self.sessionmaker()
+        try:
+            yield session
+            session.commit()
+        except:
+            session.rollback()
+            raise
+        finally:
+            session.expunge_all()
+            session.close()
 
 
 def config_to_db_session(config, Base):
@@ -286,7 +289,7 @@ def config_to_db_session(config, Base):
             cursor.close()
         event.listen(engine, 'connect', _fk_pragma_on_connect)
     Base.metadata.create_all(bind=engine)
-    return sessionmaker(bind=engine,expire_on_commit = False)
+    return sessionmaker(bind=engine, expire_on_commit=False)
 
 
 def main():
