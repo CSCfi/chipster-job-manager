@@ -29,6 +29,7 @@ from utils import (parse_msg_body, msg_type_from_headers,
 
 PERIODIC_CHECK_INTERVAL = 5.0
 JOB_DEAD_AFTER = 60
+MAX_JOB_RETRIES = 3
 
 TOPICS = {
     'client_topic': '/topic/authorised-request-topic',
@@ -100,10 +101,7 @@ class JobManager(object):
         body = parse_msg_body(frame_body)
         msg_type = msg_type_from_headers(headers)
         if msg_type == 'ResultMessage':
-            try:
-                self.handle_result_msg(frame, body)
-            except Exception as e:
-                logging.error("error in result handling %s" % e)
+            self.handle_result_msg(frame, body)
         elif msg_type == 'StatusMessage':
             # { u'host': u'<hostname>', u'hostId': u'<hostId>'}
             pass
@@ -131,6 +129,12 @@ class JobManager(object):
             elif body.get('exitState') == 'RUNNING':
                 logging.info("heartbeat for job %s" % job_id)
                 job = update_job_running(session, job_id)
+            elif body.get('exitState') == 'FAILED':
+                logging.info("job %s failed" % job_id)
+                job.update_job_results(session, job_id, frame.body)
+            elif body.get('exitState') == 'FAILED_USER_ERROR':
+                logging.info("job %s in error state %s" % (job_id, body.get('exitState')))
+                job = update_job_results(session, job_id, frame.body)
         logging.info("job %s in state %s sending results to %s" % (job_id, body.get('exitState'), job.reply_to))
         self.send_to(job.reply_to, frame.headers, frame.body)
 
@@ -195,7 +199,7 @@ class JobManager(object):
                         resp_body = populate_job_running_body(job.job_id)
                 except JobNotFound:
                     logging.info("job %s not found" % job_id)
-                    resp_body = populate_job_result_body(job_id)
+                    resp_body = populate_job_result_body(job_id, error_msg='job not found')
             self.send_to(client_topic, headers, resp_body)
         elif command == 'cancel':
             job_id = msg.get('parameter0')
@@ -228,9 +232,15 @@ class JobManager(object):
     def schedule_job(self, job_id):
         with self.session_scope() as session:
             job = get_job(session, job_id)
-            headers = json.loads(job.headers)
-            self.send_to(TOPICS['comp_topic'], headers, job.description, reply_to=TOPICS['jobmanager_topic'])
-            update_job_rescheduled(session, job_id)
+            if job.retries >= MAX_JOB_RETRIES:
+                job.finished = datetime.datetime.utcnow()
+                job.results = populate_job_result_body(job_id, error_msg='maximum number of job submits exceeded, available chipster-comps cannot run the job')
+                headers = populate_headers(job.reply_to, RESULT_MESSAGE)
+                self.send_to(job.reply_to, headers, job.results)
+            else:
+                headers = json.loads(job.headers)
+                self.send_to(TOPICS['comp_topic'], headers, job.description, reply_to=TOPICS['jobmanager_topic'])
+                update_job_rescheduled(session, job_id)
 
     def run_periodic_checks(self):
         if self.client:
@@ -279,7 +289,7 @@ class JobManager(object):
 
 def config_to_db_session(config, Base):
     if config['database_dialect'] == 'sqlite':
-        connect_string = 'sqlite://%s' % config['database_connect_string']
+        connect_string = 'sqlite:///%s' % config['database_connect_string']
     engine = create_engine(connect_string)
 
     if config['database_dialect'] == 'sqlite':

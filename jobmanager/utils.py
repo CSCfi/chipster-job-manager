@@ -79,13 +79,16 @@ def populate_job_running_body(job_id):
             '{"string": ["exitState", "RUNNING"]}]}}' % job_id)
 
 
-def populate_job_result_body(job_id, exit_state='ERROR'):
+def populate_job_result_body(job_id, exit_state='ERROR', error_msg=''):
     # AMQ Stomp message transformation assumes dict fields in certain order
     # which is why this message is not serialized through json library
-    return ('{"map": {"entry": [{"string": "errorMessage","null": ""},'
+    error_field_type = 'null'
+    if error_msg:
+        error_field_type = 'string'
+    return ('{"map": {"entry": [{"string": "errorMessage","%s": "%s"},'
             '{"string":"heartbeat","boolean":"false"},'
             '{"string": ["jobId", "%s"]},'
-            '{"string": ["exitState", "%s"]}]}}' % (job_id, exit_state))
+            '{"string": ["exitState", "%s"]}]}}' % (error_field_type, error_msg, job_id, exit_state))
 
 
 def msg_type_from_headers(headers):
