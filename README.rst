@@ -24,3 +24,14 @@ The port number 61613 is the default for stomp protocol.
 To learn more about Chipster refer to:
 
     http://chipster.csc.fi/
+
+
+==========
+Developing
+==========
+
+Run tests
+    ``tox .``
+
+Run coverage for tests
+    ``nosetests --cover-package=jobmanager --with-coverage``
