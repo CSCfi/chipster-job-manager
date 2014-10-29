@@ -1,5 +1,7 @@
-import datetime
+from __future__ import unicode_literals
 
+import datetime
+import logging
 from sqlalchemy import (Column, Integer, String, Text,
                         DateTime)
 from sqlalchemy.ext.declarative import declarative_base
@@ -35,7 +37,11 @@ class Job(Base):
     comp_id = Column(String(length=40))
 
     def __unicode__(self):
-        return '<Job:%s>' % job_id
+        return '<Job:%s>' % self.job_id
+
+    def __str__(self):
+        return self.__unicode__()
+
 
 def get_jobs(session, include_finished=False):
     if include_finished:
@@ -91,7 +97,7 @@ def update_job_results(session, job_id, results):
         raise JobNotFound(job_id)
 
     if not job.comp_id:
-        raise ValueError('cannot add results to job with no as_id' % job_id)
+        logging.warn('addings results to job %s with no comp_id' % job_id)
 
     job.finished = datetime.datetime.utcnow()
     job.results = results
