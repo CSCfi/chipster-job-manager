@@ -246,10 +246,10 @@ class JobManager(object):
         if self.client:
             status_headers = populate_comp_status_headers(TOPICS['jobmanager_topic'])
             status_body = populate_comp_status_body('get-comp-status')
-            self.send_to(TOPICS['comp_admin_topic'], status_headers, json.dumps(status_body))
+            self.send_to(TOPICS['comp_admin_topic'], status_headers, status_body)
             jobs_headers = populate_comp_status_headers(TOPICS['jobmanager_topic'])
             jobs_body = populate_comp_status_body('get-running-jobs')
-            self.send_to(TOPICS['comp_admin_topic'], jobs_headers, json.dumps(jobs_body))
+            self.send_to(TOPICS['comp_admin_topic'], jobs_headers, jobs_body)
             self.check_stalled_jobs()
 
     def check_stalled_jobs(self):
