@@ -1,6 +1,9 @@
 import time
 import uuid
 
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker
+
 JOB_MESSAGE = 'fi.csc.microarray.messaging.message.JobMessage'
 CMD_MESSAGE = 'fi.csc.microarray.messaging.message.CommandMessage'
 RESULT_MESSAGE = 'fi.csc.microarray.messaging.message.ResultMessage'
@@ -155,6 +158,21 @@ def parse_msg_body(msg):
         assert k not in result
         result[k] = v
     return result
+
+
+def config_to_db_session(config, Base):
+    if config['database_dialect'] == 'sqlite':
+        connect_string = 'sqlite:///%s' % config['database_connect_string']
+    engine = create_engine(connect_string)
+
+    if config['database_dialect'] == 'sqlite':
+        def _fk_pragma_on_connect(dbapi_con, con_record):
+            cursor = dbapi_con.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
+        event.listen(engine, 'connect', _fk_pragma_on_connect)
+    Base.metadata.create_all(bind=engine)
+    return sessionmaker(bind=engine, expire_on_commit=False)
 
 
 if __name__ == '__main__':
