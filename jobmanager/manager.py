@@ -14,8 +14,6 @@ from stompest.async import Stomp
 from stompest.async.listener import (SubscriptionListener, ErrorListener,
                                      ConnectListener, DisconnectListener,
                                      HeartBeatListener)
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker
 
 from models import (Base, JobNotFound,
                     add_job, get_job, get_jobs, update_job_comp,
@@ -26,6 +24,7 @@ from utils import (parse_msg_body, msg_type_from_headers,
                    populate_comp_status_body, populate_headers,
                    populate_comp_status_headers, populate_msg_body,
                    populate_job_running_body, populate_job_result_body,
+                   config_to_db_session
                    CMD_MESSAGE, RESULT_MESSAGE)
 
 PERIODIC_CHECK_INTERVAL = 5.0
@@ -82,6 +81,7 @@ class JobManager(object):
             'ack': 'auto',
             'transformation': 'jms-map-json'
         }
+
         self.client.subscribe(
             TOPICS['client_topic'],
             headers,
@@ -136,7 +136,6 @@ class JobManager(object):
         headers = frame.headers
         body = parse_msg_body(frame_body)
         msg_type = msg_type_from_headers(headers)
-
 
     def handle_result_msg(self, frame, body):
         job_id = body.get('jobId')
@@ -277,10 +276,10 @@ class JobManager(object):
         if self.client:
             status_headers = populate_comp_status_headers(TOPICS['jobmanager_topic'])
             status_body = populate_comp_status_body('get-comp-status')
-            self.send_to(TOPICS['comp_admin_topic'], status_headers, status_body)
+            #self.send_to(TOPICS['comp_admin_topic'], status_headers, status_body)
             jobs_headers = populate_comp_status_headers(TOPICS['jobmanager_topic'])
             jobs_body = populate_comp_status_body('get-running-jobs')
-            self.send_to(TOPICS['comp_admin_topic'], jobs_headers, jobs_body)
+            #self.send_to(TOPICS['comp_admin_topic'], jobs_headers, jobs_body)
             self.check_stalled_jobs()
 
     def check_stalled_jobs(self):
@@ -316,21 +315,6 @@ class JobManager(object):
         finally:
             session.expunge_all()
             session.close()
-
-
-def config_to_db_session(config, Base):
-    if config['database_dialect'] == 'sqlite':
-        connect_string = 'sqlite:///%s' % config['database_connect_string']
-    engine = create_engine(connect_string)
-
-    if config['database_dialect'] == 'sqlite':
-        def _fk_pragma_on_connect(dbapi_con, con_record):
-            cursor = dbapi_con.cursor()
-            cursor.execute("PRAGMA foreign_keys=ON")
-            cursor.close()
-        event.listen(engine, 'connect', _fk_pragma_on_connect)
-    Base.metadata.create_all(bind=engine)
-    return sessionmaker(bind=engine, expire_on_commit=False)
 
 
 def main():

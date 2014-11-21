@@ -18,7 +18,9 @@ class JobNotFound(Exception):
 
 class Job(Base):
     __tablename__ = 'jobs'
-
+    __publicfields__ = ['job_id', 'description', 'headers', 'results', 'created',
+                        'rescheduled', 'submitted', 'finished', 'seen', 'retries',
+                        'comp_id']
     id = Column(Integer, primary_key=True)
     job_id = Column(String(length=40))
     session_id = Column(String(length=40))
@@ -35,6 +37,12 @@ class Job(Base):
     retries = Column(Integer, default=0)
 
     comp_id = Column(String(length=40))
+
+    def to_dict(self):
+        d = {}
+        for k in self.__publicfields__:
+            d[k] = getattr(self, k)
+        return d
 
     def __unicode__(self):
         return '<Job:%s>' % self.job_id
