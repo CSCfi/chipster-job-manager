@@ -1,5 +1,6 @@
 from __future__ import unicode_literals
-
+import time
+import json
 import datetime
 import logging
 from sqlalchemy import (Column, Integer, String, Text,
@@ -38,10 +39,29 @@ class Job(Base):
 
     comp_id = Column(String(length=40))
 
+    def parse_description(self, key):
+        try:
+            return dict([x.get('string') for x in json.loads(getattr(self, key)).get('map').get('entry')])
+        except:
+            return {}
+
     def to_dict(self):
         d = {}
         for k in self.__publicfields__:
             d[k] = getattr(self, k)
+            if k in ('description'):
+                description = self.parse_description(k)
+                d['analysis_id'] = description.get('analysisID')
+            elif k in ('created', 'submitted', 'finished', 'seen', 'rescheduled'):
+                if d[k]:
+                    try:
+                        d[k] = d[k].strftime("%Y-%m-%d %H:%M:%S")
+                    except:
+                        pass
+                    if k in ('submitted'):
+                        d['queuing_time'] = (self.submitted - self.created).total_seconds()
+                    if k in ('finished'):
+                        d['execution_time'] = (self.finished - self.submitted).total_seconds()
         return d
 
     def __unicode__(self):

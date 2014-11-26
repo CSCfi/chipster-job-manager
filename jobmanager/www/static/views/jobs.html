@@ -1,0 +1,63 @@
+<h2 class="sub-header">All jobs</h2>
+<div ng-controller="JobResultModalCtrl">
+    <div class="table-responsive">
+    <script type="text/ng-template" id="jobresultcontent.html">
+        <div class="modal-header">
+            <h3 class="modal-title">Job results:</h3>
+        </div>
+        <div class="modal-body">
+            <div>
+                <b>Job id: {{ results.jobId }}</b>
+            </div>
+            <div>
+                <b>Exit state: {{ results.exitState }}</b>
+            </div>
+            <div>
+                <b>State detail: {{ results.stateDetail }}</b>
+            </div>
+            <div>
+                <b>Source code:</b>
+                <verbatim>
+                {{ results.sourceCode }}
+                </verbatim>
+            </div>
+            <div>
+                <b>Output:</b>
+                <verbatim>
+                {{ results.outputText }}
+                </verbatim>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" ng-click="ok()">OK</button>
+        </div>
+    </script>
+    Search: <input ng-model="searchText">
+      <table class="table table-striped">
+        <thead>
+          <tr>
+            <th>Job ID</th>
+            <th>Analysis</th>
+            <th>Started</th>
+            <th>Submitted</th>
+            <th>Finished</th>
+            <th>Running At</th>
+            <th>Operations</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr ng-repeat="job in jobs | filter:searchText">
+            <td>{{job.job_id}}</td>
+            <td>{{job.analysis_id}}</td>
+            <td>{{job.created}}</td>
+            <td>{{job.submitted}}<p>(queuing time: {{job.queuing_time}}s)</p></td>
+            <td>{{job.finished}}<p>(runtime: {{job.execution_time}}s)</p></td>
+            <td>{{job.comp_id}}</td>    
+            <td>
+                <button class="btn btn-default" ng-click="open(job.job_id)">View results</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+</div>

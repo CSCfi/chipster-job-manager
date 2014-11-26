@@ -24,7 +24,7 @@ from utils import (parse_msg_body, msg_type_from_headers,
                    populate_comp_status_body, populate_headers,
                    populate_comp_status_headers, populate_msg_body,
                    populate_job_running_body, populate_job_result_body,
-                   config_to_db_session
+                   config_to_db_session,
                    CMD_MESSAGE, RESULT_MESSAGE)
 
 PERIODIC_CHECK_INTERVAL = 5.0
