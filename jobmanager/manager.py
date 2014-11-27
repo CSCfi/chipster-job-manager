@@ -19,7 +19,7 @@ from models import (Base, JobNotFound,
                     add_job, get_job, get_jobs, update_job_comp,
                     update_job_results, update_job_running,
                     update_job_rescheduled, update_job_reply_to,
-                    update_job_cancelled)
+                    update_job_cancelled, purge_completed_jobs)
 from utils import (parse_msg_body, msg_type_from_headers,
                    populate_comp_status_body, populate_headers,
                    populate_comp_status_headers, populate_msg_body,
@@ -126,6 +126,7 @@ class JobManager(object):
         else:
             try:
                 client_topic = self.resolve_reply_to(body)
+                logging.warn("unknown msg: %s" % frame.body)
                 self.send_to(client_topic, headers, json.dumps(frame.body),
                              reply_to=headers.get('reply-to'))
             except ReplyToResolutionException:
@@ -141,24 +142,28 @@ class JobManager(object):
         job_id = body.get('jobId')
         with self.session_scope() as session:
             job = get_job(session, job_id)
-            if body.get('exitState') == 'COMPLETED':
+            exit_state = body.get('exitState')
+            if exit_state == 'COMPLETED':
                 logging.info("results ready for job %s" % job_id)
-                job = update_job_results(session, job_id, frame.body)
-            elif body.get('exitState') == 'ERROR':
+                job = update_job_results(session, job_id, frame.body, exit_state)
+            elif exit_state == 'ERROR':
                 logging.info("job %s in error state %s" % (job_id, body))
-                job = update_job_results(session, job_id, frame.body)
-            elif body.get('exitState') == 'RUNNING':
+                job = update_job_results(session, job_id, frame.body, exit_state)
+            elif exit_state == 'RUNNING':
                 logging.info("heartbeat for job %s" % job_id)
                 job = update_job_running(session, job_id)
-            elif body.get('exitState') == 'FAILED':
+            elif exit_state == 'FAILED':
                 logging.info("job %s failed" % job_id)
-                job.update_job_results(session, job_id, frame.body)
-            elif body.get('exitState') == 'FAILED_USER_ERROR':
+                try:
+                    update_job_results(session, job_id, frame.body, exit_state)
+                except Exception as e:
+                    logging.warn(e)
+            elif exit_state == 'FAILED_USER_ERROR':
                 logging.info("job %s in error state %s" %
-                             (job_id, body.get('exitState')))
-                job = update_job_results(session, job_id, frame.body)
+                             (job_id, exit_state))
+                job = update_job_results(session, job_id, frame.body, exit_state)
         logging.info("job %s in state %s sending results to %s" %
-                     (job_id, body.get('exitState'), job.reply_to))
+                     (job_id, exit_state, job.reply_to))
         self.send_to(job.reply_to, frame.headers, frame.body)
 
     def handle_joblog_msg(self, frame, body):
@@ -276,10 +281,10 @@ class JobManager(object):
         if self.client:
             status_headers = populate_comp_status_headers(TOPICS['jobmanager_topic'])
             status_body = populate_comp_status_body('get-comp-status')
-            #self.send_to(TOPICS['comp_admin_topic'], status_headers, status_body)
+            self.send_to(TOPICS['comp_admin_topic'], status_headers, status_body)
             jobs_headers = populate_comp_status_headers(TOPICS['jobmanager_topic'])
             jobs_body = populate_comp_status_body('get-running-jobs')
-            #self.send_to(TOPICS['comp_admin_topic'], jobs_headers, jobs_body)
+            self.send_to(TOPICS['comp_admin_topic'], jobs_headers, jobs_body)
             self.check_stalled_jobs()
 
     def check_stalled_jobs(self):
@@ -325,6 +330,7 @@ def main():
     parser.add_argument('config_file')
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--logfile')
+    parser.add_argument('--purge', action='store_true')
     args = parser.parse_args()
 
     if args.logfile:
@@ -335,6 +341,10 @@ def main():
 
     config = yaml.load(open(args.config_file))
     sessionmaker = config_to_db_session(config, Base)
+
+    if args.purge:
+        purge_completed_jobs(sessionmaker())
+        return
 
     stomp_endpoint = config['stomp_endpoint']
     stomp_login = config['stomp_login']

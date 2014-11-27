@@ -1,4 +1,4 @@
-<h2 class="sub-header">All jobs</h2>
+<h2 class="sub-header">{{title}}</h2>
 <div ng-controller="JobResultModalCtrl">
     <div class="table-responsive">
     <script type="text/ng-template" id="jobresultcontent.html">
@@ -7,24 +7,30 @@
         </div>
         <div class="modal-body">
             <div>
-                <b>Job id: {{ results.jobId }}</b>
+                <b>Job id: {{ results.job_id }}</b>
             </div>
             <div>
-                <b>Exit state: {{ results.exitState }}</b>
+                <b>State: {{ results.state }}</b>
             </div>
-            <div>
+            <div ng-if="results.stateDetail">
                 <b>State detail: {{ results.stateDetail }}</b>
             </div>
-            <div>
+            <div ng-if="results.sourceCode">
                 <b>Source code:</b>
                 <verbatim>
                 {{ results.sourceCode }}
                 </verbatim>
             </div>
-            <div>
+            <div ng-if="results.outputText">
                 <b>Output:</b>
                 <verbatim>
                 {{ results.outputText }}
+                </verbatim>
+            </div>
+            <div ng-if="results.errorMessage">
+                <b>Error message</b>
+                <verbatim>
+                {{ results.errorMessage }}
                 </verbatim>
             </div>
         </div>
@@ -37,6 +43,7 @@
         <thead>
           <tr>
             <th>Job ID</th>
+            <th>State</th>
             <th>Analysis</th>
             <th>Started</th>
             <th>Submitted</th>
@@ -48,10 +55,11 @@
         <tbody>
           <tr ng-repeat="job in jobs | filter:searchText">
             <td>{{job.job_id}}</td>
+            <td>{{job.state}}</td>
             <td>{{job.analysis_id}}</td>
             <td>{{job.created}}</td>
             <td>{{job.submitted}}<p>(queuing time: {{job.queuing_time}}s)</p></td>
-            <td>{{job.finished}}<p>(runtime: {{job.execution_time}}s)</p></td>
+            <td>{{job.finished}}<p ng-if="job.finished">(runtime: {{job.execution_time}}s)</p></td>
             <td>{{job.comp_id}}</td>    
             <td>
                 <button class="btn btn-default" ng-click="open(job.job_id)">View results</button>

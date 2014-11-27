@@ -11,7 +11,7 @@ def main():
     args = parser.parse_args()
 
     config = yaml.load(open(args.config_file))
-
+    app.config['params'] = config
     app.config['DB'] = config_to_db_session(config, Base)
     app.run(debug=config.get('debug'))
 

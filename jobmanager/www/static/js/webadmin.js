@@ -17,22 +17,25 @@ angular.module('WebAdmin').controller('NavCtrl', function($scope, $route, $route
         $scope.$routeParams = $routeParams;
     })
     .controller('DashboardCtrl', function($scope, $http) {
+        $scope.title = 'Active jobs';
         $http.get('/jobs/?active=True').
             success(function(data, status, headers, config) {
                 $scope.jobs = data;
+                $scope.numberOfJobs = data.length;
             }).
             error(function(data, status, headers, config) {
                 alert("data loading error");
             });
     })
     .controller('JobsCtrl', function($scope, $http) {
-         $http.get('/jobs').
+        $scope.title = 'All jobs';
+        $http.get('/jobs').
             success(function(data, status, headers, config) {
                 $scope.jobs = data;
             }).
             error(function(data, status, headers, config) {
                 alert("data loading error");
-            });       
+            });
     })
     .controller('JobResultModalCtrl', function($scope, $modal, $http) {
         $scope.open = function(job_id) {
@@ -61,7 +64,15 @@ angular.module('WebAdmin').controller('NavCtrl', function($scope, $route, $route
         };
     })
     .controller('MaintenanceCtrl', function($scope, $http) {
-        
+        $http.get('/system_info/').success(function(data) {
+            $scope.info = data;
+        });
+        $scope.purge = function() {
+            $scope.purgeMsg = "glyphicon-time";
+            $http.delete('/jobs/').success(function(data) {
+                $scope.purgeMsg = 'glyphicon-ok';
+            });
+        };
     })
     .config(['$routeProvider', function($routeProvider) {
         $routeProvider
