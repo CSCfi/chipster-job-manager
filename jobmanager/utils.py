@@ -74,6 +74,23 @@ def populate_comp_status_body(command):
     return '{"map": {"entry": {"string": ["command", "%s"]}}}' % command
 
 
+def populate_joblog_body(job_id):
+    return {"map": {"entry": [
+        {"string": ["startTime", "Nov 13, 2014 9:03:32 AM"]},
+        {"string": "errorMessage", "null":""},
+        {"string": ["operation", "SortBed.java"]},
+        {"string": ["username","chipster"]},
+        {"string":[
+          "jobId","eed82e16-8ab8-44b3-9f52c0277eeca88a"
+        ]},
+        {"string":
+          "outputText","null":""
+        },
+        {"string":[
+          "compHost","chipcld-create-test-vm-jobmanager-harri1"]},{"string":["stateDetail","transferring input data"]},{"string":["exitState","RUNNING"]}
+      ]}
+    }
+
 def populate_job_running_body(job_id):
     # AMQ Stomp message transformation assumes dict fields in certain order
     # which is why this message is not serialized through json library

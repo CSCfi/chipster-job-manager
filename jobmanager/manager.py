@@ -12,16 +12,19 @@ from stompest.config import StompConfig
 from stompest.protocol import StompSpec
 from stompest.async import Stomp
 from stompest.async.listener import (SubscriptionListener, ErrorListener,
-                                     ConnectListener, DisconnectListener, HeartBeatListener)
+                                     ConnectListener, DisconnectListener,
+                                     HeartBeatListener)
+
 from models import (Base, JobNotFound,
                     add_job, get_job, get_jobs, update_job_comp,
                     update_job_results, update_job_running,
                     update_job_rescheduled, update_job_reply_to,
-                    update_job_cancelled)
+                    update_job_cancelled, purge_completed_jobs)
 from utils import (parse_msg_body, msg_type_from_headers,
                    populate_comp_status_body, populate_headers,
                    populate_comp_status_headers, populate_msg_body,
                    populate_job_running_body, populate_job_result_body,
+                   config_to_db_session,
                    CMD_MESSAGE, RESULT_MESSAGE)
 
 PERIODIC_CHECK_INTERVAL = 5.0
@@ -33,7 +36,7 @@ TOPICS = {
     'comp_topic': '/topic/authorized-managed-request-topic',
     'jobmanager_topic': '/topic/jobmanager-topic',
     'jobmanager_admin_topic': '/topic/jobmanager-admin-topic',
-    'comp_admin_topic': '/topic/comp-admin-topic'
+    'comp_admin_topic': '/topic/comp-admin-topic',
 }
 
 
@@ -53,7 +56,8 @@ class JobManagerErrorLister(ErrorListener):
 
 
 def listeners():
-    return [ConnectListener(), DisconnectListener(), JobManagerErrorLister(), HeartBeatListener()]
+    return [ConnectListener(), DisconnectListener(), JobManagerErrorLister(),
+            HeartBeatListener()]
 
 
 class JobManager(object):
@@ -68,7 +72,8 @@ class JobManager(object):
     @defer.inlineCallbacks
     def run(self):
         try:
-            self.client = yield Stomp(self.config, listenersFactory=listeners).connect()
+            self.client = yield Stomp(self.config,
+                                      listenersFactory=listeners).connect()
         except:
             reactor.stop()
         headers = {
@@ -76,14 +81,22 @@ class JobManager(object):
             'ack': 'auto',
             'transformation': 'jms-map-json'
         }
-        self.client.subscribe(TOPICS['client_topic'], headers,
-                              listener=SubscriptionListener(self.processClientMessage, ack=False))
-        self.client.subscribe(TOPICS['jobmanager_topic'], headers,
-                              listener=SubscriptionListener(self.processCompMessage, ack=False))
-        self.client.subscribe(TOPICS['jobmanager_admin_topic'], headers,
-                              listener=SubscriptionListener(self.processAdminWebMessage, ack=False))
 
-    def processClientMessage(self, client, frame):
+        self.client.subscribe(
+            TOPICS['client_topic'],
+            headers,
+            listener=SubscriptionListener(self.process_client_message, ack=False))
+        self.client.subscribe(
+            TOPICS['jobmanager_topic'],
+            headers,
+            listener=SubscriptionListener(self.process_comp_message, ack=False))
+        self.client.subscribe(
+            TOPICS['jobmanager_admin_topic'],
+            headers,
+            listener=SubscriptionListener(self.process_jobmanager_admin_message,
+                                          ack=False))
+
+    def process_client_message(self, client, frame):
         try:
             msg_type = msg_type_from_headers(frame.headers)
             if msg_type == 'JobMessage':
@@ -91,11 +104,12 @@ class JobManager(object):
             elif msg_type == 'CmdMessage':
                 self.handle_client_cmd_msg(frame)
             else:
-                self.send_to(TOPICS['comp_topic'], frame.headers, frame.body, reply_to=TOPICS['jobmanager_topic'])
+                self.send_to(TOPICS['comp_topic'], frame.headers, frame.body,
+                             reply_to=TOPICS['jobmanager_topic'])
         except Exception as e:
             logging.warn(e)
 
-    def processCompMessage(self, client, frame):
+    def process_comp_message(self, client, frame):
         frame_body = json.loads(frame.body)
         headers = frame.headers
         body = parse_msg_body(frame_body)
@@ -112,35 +126,44 @@ class JobManager(object):
         else:
             try:
                 client_topic = self.resolve_reply_to(body)
-                self.send_to(client_topic, headers, json.dumps(frame.body), reply_to=headers.get('reply-to'))
+                logging.warn("unknown msg: %s" % frame.body)
+                self.send_to(client_topic, headers, json.dumps(frame.body),
+                             reply_to=headers.get('reply-to'))
             except ReplyToResolutionException:
                 logging.warn("unable to resolve reply_to address")
 
-    def processAdminWebMessage(self, client, frame):
+    def process_jobmanager_admin_message(self, client, frame):
         frame_body = json.loads(frame.body)
         headers = frame.headers
         body = parse_msg_body(frame_body)
+        msg_type = msg_type_from_headers(headers)
 
     def handle_result_msg(self, frame, body):
         job_id = body.get('jobId')
         with self.session_scope() as session:
             job = get_job(session, job_id)
-            if body.get('exitState') == 'COMPLETED':
+            exit_state = body.get('exitState')
+            if exit_state == 'COMPLETED':
                 logging.info("results ready for job %s" % job_id)
-                job = update_job_results(session, job_id, frame.body)
-            elif body.get('exitState') == 'ERROR':
+                job = update_job_results(session, job_id, frame.body, exit_state)
+            elif exit_state == 'ERROR':
                 logging.info("job %s in error state %s" % (job_id, body))
-                job = update_job_results(session, job_id, frame.body)
-            elif body.get('exitState') == 'RUNNING':
+                job = update_job_results(session, job_id, frame.body, exit_state)
+            elif exit_state == 'RUNNING':
                 logging.info("heartbeat for job %s" % job_id)
                 job = update_job_running(session, job_id)
-            elif body.get('exitState') == 'FAILED':
+            elif exit_state == 'FAILED':
                 logging.info("job %s failed" % job_id)
-                job.update_job_results(session, job_id, frame.body)
-            elif body.get('exitState') == 'FAILED_USER_ERROR':
-                logging.info("job %s in error state %s" % (job_id, body.get('exitState')))
-                job = update_job_results(session, job_id, frame.body)
-        logging.info("job %s in state %s sending results to %s" % (job_id, body.get('exitState'), job.reply_to))
+                try:
+                    update_job_results(session, job_id, frame.body, exit_state)
+                except Exception as e:
+                    logging.warn(e)
+            elif exit_state == 'FAILED_USER_ERROR':
+                logging.info("job %s in error state %s" %
+                             (job_id, exit_state))
+                job = update_job_results(session, job_id, frame.body, exit_state)
+        logging.info("job %s in state %s sending results to %s" %
+                     (job_id, exit_state, job.reply_to))
         self.send_to(job.reply_to, frame.headers, frame.body)
 
     def handle_joblog_msg(self, frame, body):
@@ -169,8 +192,11 @@ class JobManager(object):
                 with self.session_scope() as session:
                     update_job_comp(session, job_id, as_id)
                 body = populate_msg_body('choose', as_id, job_id)
-                headers = populate_headers(TOPICS['comp_topic'], CMD_MESSAGE, session_id=job.session_id, reply_to=TOPICS['jobmanager_topic'])
-                self.send_to(TOPICS['comp_topic'], headers, body=json.dumps(body))
+                headers = populate_headers(TOPICS['comp_topic'], CMD_MESSAGE,
+                                           session_id=job.session_id,
+                                           reply_to=TOPICS['jobmanager_topic'])
+                self.send_to(TOPICS['comp_topic'], headers,
+                             body=json.dumps(body))
         else:
             self.send_to(job.reply_to, headers, frame.body)
 
@@ -180,8 +206,12 @@ class JobManager(object):
         topic_name = frame.headers['reply-to'].split('/')[-1]
         reply_to = '/remote-temp-topic/%s' % topic_name
         with self.session_scope() as session:
-            add_job(session, body.get('jobID'), frame.body, json.dumps(frame.headers), frame.headers['session-id'], reply_to=reply_to)
-        self.send_to(TOPICS['comp_topic'], frame.headers, json.dumps(frame_body), reply_to=TOPICS['jobmanager_topic'])
+            add_job(session, body.get('jobID'), frame.body,
+                    json.dumps(frame.headers), frame.headers['session-id'],
+                    reply_to=reply_to)
+        self.send_to(TOPICS['comp_topic'], frame.headers,
+                     json.dumps(frame_body),
+                     reply_to=TOPICS['jobmanager_topic'])
 
     def handle_client_cmd_msg(self, frame):
         frame_body = json.loads(frame.body)
@@ -251,10 +281,10 @@ class JobManager(object):
         if self.client:
             status_headers = populate_comp_status_headers(TOPICS['jobmanager_topic'])
             status_body = populate_comp_status_body('get-comp-status')
-            #self.send_to(TOPICS['comp_admin_topic'], status_headers, status_body)
+            self.send_to(TOPICS['comp_admin_topic'], status_headers, status_body)
             jobs_headers = populate_comp_status_headers(TOPICS['jobmanager_topic'])
             jobs_body = populate_comp_status_body('get-running-jobs')
-            #self.send_to(TOPICS['comp_admin_topic'], jobs_headers, jobs_body)
+            self.send_to(TOPICS['comp_admin_topic'], jobs_headers, jobs_body)
             self.check_stalled_jobs()
 
     def check_stalled_jobs(self):
@@ -300,6 +330,7 @@ def main():
     parser.add_argument('config_file')
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--logfile')
+    parser.add_argument('--purge', action='store_true')
     args = parser.parse_args()
 
     if args.logfile:
@@ -310,6 +341,10 @@ def main():
 
     config = yaml.load(open(args.config_file))
     sessionmaker = config_to_db_session(config, Base)
+
+    if args.purge:
+        purge_completed_jobs(sessionmaker())
+        return
 
     stomp_endpoint = config['stomp_endpoint']
     stomp_login = config['stomp_login']

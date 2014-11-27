@@ -1,0 +1,8 @@
+<div ng-controller="MaintenanceCtrl">
+    <h3>Purge completed jobs</h3>
+    Will purge jobs from database completed more than 3 months ago
+    <button type="button" class="btn btn-danger" ng-click="purge()">Purge</button>
+    <span class="glyphicon {{ purgeMsg }}" aria-hidden="true"></span>
+    <h3>Database size</h3>
+    Database size {{ info.db_size }} bytes.
+</div>
