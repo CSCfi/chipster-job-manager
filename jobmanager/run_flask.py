@@ -1,9 +1,9 @@
 import yaml
 import argparse
 
-from models import Base
-from utils import config_to_db_session
-from www import app
+from jobmanager.models import Base
+from jobmanager.utils import config_to_db_session
+from jobmanager.www import app
 
 def main():
     parser = argparse.ArgumentParser()

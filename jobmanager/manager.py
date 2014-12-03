@@ -15,17 +15,17 @@ from stompest.async.listener import (SubscriptionListener, ErrorListener,
                                      ConnectListener, DisconnectListener,
                                      HeartBeatListener)
 
-from models import (Base, JobNotFound,
-                    add_job, get_job, get_jobs, update_job_comp,
-                    update_job_results, update_job_running,
-                    update_job_rescheduled, update_job_reply_to,
-                    update_job_cancelled, purge_completed_jobs)
-from utils import (parse_msg_body, msg_type_from_headers,
-                   populate_comp_status_body, populate_headers,
-                   populate_comp_status_headers, populate_msg_body,
-                   populate_job_running_body, populate_job_result_body,
-                   config_to_db_session,
-                   CMD_MESSAGE, RESULT_MESSAGE)
+from jobmanager.models import (Base, JobNotFound,
+                               add_job, get_job, get_jobs, update_job_comp,
+                               update_job_results, update_job_running,
+                               update_job_rescheduled, update_job_reply_to,
+                               update_job_cancelled, purge_completed_jobs)
+from jobmanager.utils import (parse_msg_body, msg_type_from_headers,
+                              populate_comp_status_body, populate_headers,
+                              populate_comp_status_headers, populate_msg_body,
+                              populate_job_running_body, populate_job_result_body,
+                              config_to_db_session,
+                              CMD_MESSAGE, RESULT_MESSAGE, JOBLOG_MESSAGE)
 
 PERIODIC_CHECK_INTERVAL = 5.0
 JOB_DEAD_AFTER = 60
@@ -133,10 +133,15 @@ class JobManager(object):
                 logging.warn("unable to resolve reply_to address")
 
     def process_jobmanager_admin_message(self, client, frame):
-        frame_body = json.loads(frame.body)
-        headers = frame.headers
-        body = parse_msg_body(frame_body)
-        msg_type = msg_type_from_headers(headers)
+        msg_type = msg_type_from_headers(frame.headers)
+        if msg_type == 'CmdMessage':
+            topic_name = frame.headers['reply-to'].split('/')[-1]
+            reply_to = '/remote-temp-topic/%s' % topic_name
+            headers = populate_headers(reply_to, JOBLOG_MESSAGE)
+            with self.session_scope() as session:
+                for job in get_jobs(session):
+                    self.send_to(reply_to, headers=headers,
+                                 body=json.dumps(populate_job_result_body(job)))
 
     def handle_result_msg(self, frame, body):
         job_id = body.get('jobId')
@@ -195,23 +200,21 @@ class JobManager(object):
                 headers = populate_headers(TOPICS['comp_topic'], CMD_MESSAGE,
                                            session_id=job.session_id,
                                            reply_to=TOPICS['jobmanager_topic'])
-                self.send_to(TOPICS['comp_topic'], headers,
-                             body=json.dumps(body))
+                self.send_to(TOPICS['comp_topic'], headers, body=body)
         else:
             self.send_to(job.reply_to, headers, frame.body)
 
     def handle_client_job_msg(self, frame):
+        print frame.headers
+        print frame.body
         frame_body = json.loads(frame.body)
         body = parse_msg_body(frame_body)
         topic_name = frame.headers['reply-to'].split('/')[-1]
         reply_to = '/remote-temp-topic/%s' % topic_name
-        with self.session_scope() as session:
-            add_job(session, body.get('jobID'), frame.body,
-                    json.dumps(frame.headers), frame.headers['session-id'],
-                    reply_to=reply_to)
-        self.send_to(TOPICS['comp_topic'], frame.headers,
-                     json.dumps(frame_body),
-                     reply_to=TOPICS['jobmanager_topic'])
+        job_id = body.get('jobID')
+        session_id = frame.headers['session-id']
+        self.schedule_job(job_id, frame.headers, frame.body
+                          session_id=session_id, reply_to=reply_to)
 
     def handle_client_cmd_msg(self, frame):
         frame_body = json.loads(frame.body)
@@ -238,12 +241,8 @@ class JobManager(object):
             self.send_to(client_topic, headers, resp_body)
         elif command == 'cancel':
             job_id = msg.get('parameter0')
-            with self.session_scope() as session:
-                try:
-                    update_job_cancelled(session, job_id)
-                except JobNotFound:
-                    logging.warn("trying to cancel a non-existing job")
-            self.send_to(TOPICS['comp_topic'], headers, frame.body)
+            session_id = headers.get('session-id')
+            self.cancel_job(job_id, session_id)
         else:
             self.send_to(TOPICS['comp_topic'], headers, frame.body)
 
@@ -264,7 +263,14 @@ class JobManager(object):
                     return job.reply_to
         raise ReplyToResolutionException('Unable to resolve reply_to address')
 
-    def schedule_job(self, job_id):
+    def schedule_job(self, job_id, headers, body, session_id, reply_to):
+        with self.session_scope() as session:
+            add_job(session, job_id, body, json.dumps(headers), session_id,
+                    reply_to=reply_to)
+        self.send_to(TOPICS['comp_topic'], headers, json.dumps(body),
+                     reply_to=TOPICS['jobmanager_topic'])
+
+    def reschedule_job(self, job_id):
         with self.session_scope() as session:
             job = get_job(session, job_id)
             if job.retries >= MAX_JOB_RETRIES:
@@ -276,6 +282,17 @@ class JobManager(object):
                 headers = json.loads(job.headers)
                 self.send_to(TOPICS['comp_topic'], headers, job.description, reply_to=TOPICS['jobmanager_topic'])
                 update_job_rescheduled(session, job_id)
+
+    def cancel_job(self, job_id, session_id):
+        headers = populate_headers(TOPICS['comp_topic'], CMD_MESSAGE,
+                                   session_id=session_id)
+        body = populate_cancel_body(job_id)
+        with self.session_scope() as session:
+            try:
+                update_job_cancelled(session, job_id)
+            except JobNotFound:
+                logging.warn("trying to cancel a non-existing job")
+        self.send_to(TOPICS['comp_topic'], headers, body)
 
     def run_periodic_checks(self):
         if self.client:
@@ -295,18 +312,31 @@ class JobManager(object):
                     if (now - job.seen).total_seconds() > JOB_DEAD_AFTER:
                         logging.warn("Job %s seems to be dead (no action for %s seconds), rescheduling job" %
                                      (job.job_id, (now - job.seen).total_seconds()))
-                        self.schedule_job(job.job_id)
+                        self.reschedule_job(job.job_id)
                 elif job.submitted and not job.seen:
                     if (now - job.submitted).total_seconds() > JOB_DEAD_AFTER:
                         logging.warn("Job %s is not reported by any analysis "
                                      "server and is not expired, rescheduling "
                                      "job" % job.job_id)
-                        self.schedule_job(job.job_id)
+                        self.reschedule_job(job.job_id)
                 elif job.created and not job.submitted:
                     if (now - job.created).total_seconds() > JOB_DEAD_AFTER:
                         logging.warn("Job %s is not scheduled and is now "
                                      "expired, rescheduling" % job.job_id)
-                        self.schedule_job(job.job_id)
+                        self.reschedule_job(job.job_id)
+
+    def generate_load(self):
+        {u'username': u'chipster', u'session-id':
+                u'6c52c589-c1a5-4038-9c9a-6b6d203628a5', u'destination':
+                u'/topic/authorised-request-topic', u'timestamp':
+                u'1417607038606', u'expires': u'0', u'persistent': u'true',
+                u'class': u'fi.csc.microarray.messaging.message.JobMessage',
+                u'priority': u'4', u'multiplex-channel': u'null', u'reply-to':
+                u'/remote-temp-topic/ID:tldr-51251-1417535328261-3:1:19',
+                u'message-id': u'eb1bb5b0-fde1-4780-8ab3-d9cafa1bfb0e',
+                u'transformation': u'jms-map-json'}
+        {"map":{"entry":[{"string":["payload_input","9def6449-766c-4a73-a3b2-0a3018d00f78"]},{"string":["analysisID","test-data-in.R"]},{"string":["jobID","6ec473a3-0470-454b-a75b-4846c896a79e"]}]}}
+
 
     @contextmanager
     def session_scope(self):

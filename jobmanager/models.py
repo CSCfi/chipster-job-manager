@@ -1,12 +1,11 @@
 from __future__ import unicode_literals
-import time
-import json
 import datetime
 import logging
 from sqlalchemy import (Column, Integer, String, Text,
                         DateTime)
 from sqlalchemy.ext.declarative import declarative_base
 
+from jobmanager.utils import parse_description
 
 Base = declarative_base()
 
@@ -29,29 +28,24 @@ class Job(Base):
     description = Column(Text)
     headers = Column(Text)
     results = Column(Text)
+    analysis_id = Column(Text)
     reply_to = Column(String(length=255))
     state = Column(String(length=32))
     created = Column(DateTime)
     rescheduled = Column(DateTime)
     submitted = Column(DateTime)
+    username = Column(String(255))
     finished = Column(DateTime)
     seen = Column(DateTime)
     retries = Column(Integer, default=0)
-
     comp_id = Column(String(length=40))
-
-    def parse_description(self, key):
-        try:
-            return dict([x.get('string') for x in json.loads(getattr(self, key)).get('map').get('entry')])
-        except:
-            return {}
 
     def to_dict(self):
         d = {}
         for k in self.__publicfields__:
             d[k] = getattr(self, k)
             if k in ('description'):
-                description = self.parse_description(k)
+                description = parse_description(self.description)
                 d['analysis_id'] = description.get('analysisID')
             elif k in ('created', 'submitted', 'finished', 'seen', 'rescheduled'):
                 if d[k]:
@@ -90,6 +84,8 @@ def add_job(session, job_id, description, headers, session_id, reply_to=None):
     desc = {}
     desc['job_id'] = job_id
     desc['description'] = description
+    parsed_description = parse_description(description)
+    desc['analysis_id'] = parsed_description.get('analysisID')
     desc['created'] = datetime.datetime.utcnow()
     desc['headers'] = headers
     desc['state'] = 'CREATED'
@@ -174,12 +170,13 @@ def update_job_cancelled(session, job_id):
     session.merge(job)
     return job
 
+
 def purge_completed_jobs(session, months=3):
     if type(months) is not int:
         raise ValueError("months parameter must have integer type")
     if months <= 1:
         raise RuntimeError("months parameter must be greater than one")
-    delta = datetime.timedelta(30*months)
+    delta = datetime.timedelta(30 * months)
     now = datetime.datetime.utcnow()
     jobs = session.query(Job).filter(Job.finished < (now - delta))
     for job in jobs:

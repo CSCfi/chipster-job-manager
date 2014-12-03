@@ -9,4 +9,4 @@ def with_db_session(f):
         return f(app.config['DB'](), *args, **kwargs)
     return wrapper
 
-import www.httpserver
+import jobmanager.www.httpserver

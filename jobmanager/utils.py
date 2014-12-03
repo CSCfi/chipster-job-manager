@@ -1,3 +1,4 @@
+import json
 import time
 import uuid
 
@@ -31,26 +32,6 @@ def populate_headers(destination, msg_class, session_id='null', timestamp=None,
     return msg
 
 
-def populate_msg_body(msg_type, as_id, job_id):
-    if msg_type == 'choose':
-        return {"map": {"entry": [
-                {"string": ["command", "choose"]},
-                {"string": ["named-parameter-value1", as_id]},
-                {"string": ["named-parameter-key1", "as-id"]},
-                {"string": ["named-parameter-value0", job_id]},
-                {"string": ["named-parameter-key0", "job-id"]}
-                ]}}
-    elif msg_type == 'offer':
-        return {"map": {"entry": [
-                {"string": ["command", "offer"]},
-                {"string": ["named-parameter-value1", as_id]},
-                {"string": ["named-parameter-key1", "as-id"]},
-                {"string": ["named-parameter-value0", job_id]},
-                {"string": ["named-parameter-key0", "job-id"]}
-                ]}}
-    else:
-        assert RuntimeError("unknown message type")
-
 
 def populate_comp_status_headers(reply_topic, timestamp=None):
     timestamp = str(int(time.time()) * 1000)
@@ -69,27 +50,51 @@ def populate_comp_status_headers(reply_topic, timestamp=None):
             u'transformation': u'jms-map-json'
             }
 
+def populate_msg_body(msg_type, as_id, job_id):
+    if msg_type == 'choose':
+        return ('{"map": {"entry": ['
+                '{"string": ["command", "choose"]},'
+                '{"string": ["named-parameter-value1", "%s"]},'
+                '{"string": ["named-parameter-key1", "as-id"]},'
+                '{"string": ["named-parameter-value0", "%s"]},'
+                '{"string": ["named-parameter-key0", "job-id"]}'
+                ']}}' % (as_id, job_id))
+    elif msg_type == 'offer':
+        return ('{"map": {"entry": ['
+                '{"string": ["command", "offer"]},'
+                '{"string": ["named-parameter-value1", "%s"]},'
+                '{"string": ["named-parameter-key1", "as-id"]},'
+                '{"string": ["named-parameter-value0", "%s"]},'
+                '{"string": ["named-parameter-key0", "job-id"]}'
+                ']}}' % (as_id, job_id))
+    else:
+        assert RuntimeError("unknown message type")
+
+
+
 
 def populate_comp_status_body(command):
     return '{"map": {"entry": {"string": ["command", "%s"]}}}' % command
 
 
-def populate_joblog_body(job_id):
-    return {"map": {"entry": [
-        {"string": ["startTime", "Nov 13, 2014 9:03:32 AM"]},
-        {"string": "errorMessage", "null":""},
-        {"string": ["operation", "SortBed.java"]},
-        {"string": ["username","chipster"]},
-        {"string":[
-          "jobId","eed82e16-8ab8-44b3-9f52c0277eeca88a"
-        ]},
-        {"string":
-          "outputText","null":""
-        },
-        {"string":[
-          "compHost","chipcld-create-test-vm-jobmanager-harri1"]},{"string":["stateDetail","transferring input data"]},{"string":["exitState","RUNNING"]}
-      ]}
-    }
+def populate_cancel_body(job_id):
+    return ('{"map": {"entry": [{"string": ["command", "cancel"]},'
+            '{"string":["parameter0", "%s"]}]}}' % job_id)
+
+
+def populate_joblog_body(job):
+    return ('{"map": {"entry": ['
+            '{"string": ["startTime", "%s"]},'
+            '{"string": "errorMessage", "null": ""},'
+            '{"string": ["operation", "%s"]},'
+            '{"string": ["username", "%s"]},'
+            '{"string": ["jobId", "%s"]}, {"string": "outputText", "null": ""},'
+            '{"string": ["compHost", "%s"]}, {"string": ["stateDetail",'
+            '"running"]}, {"string": ["exitState", "RUNNING"]}'
+            ']}}' % (job.created.strftime("%b %d, %Y %I:%M:%S %p"),
+                     job.analysis_id, job.username, job.job_id,
+                     job.comp_id))
+
 
 def populate_job_running_body(job_id):
     # AMQ Stomp message transformation assumes dict fields in certain order
@@ -175,6 +180,13 @@ def parse_msg_body(msg):
         assert k not in result
         result[k] = v
     return result
+
+
+def parse_description(desc):
+    try:
+        return dict([x.get('string') for x in json.loads(desc).get('map').get('entry')])
+    except:
+        return {}
 
 
 def config_to_db_session(config, Base):

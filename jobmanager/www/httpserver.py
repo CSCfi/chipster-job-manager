@@ -1,7 +1,7 @@
 import json
 import os
 from flask import jsonify, request
-from models import Job, purge_completed_jobs
+from jobmanager.models import Job, purge_completed_jobs
 from . import app, with_db_session
 
 
