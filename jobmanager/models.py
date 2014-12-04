@@ -125,7 +125,6 @@ def update_job_results(session, job_id, results, exit_state):
 
     if not job.comp_id:
         logging.warn('addings results to job %s with no comp_id' % job_id)
-    logging.warn("job failed, setting finished time")
     job.finished = datetime.datetime.utcnow()
     job.state = exit_state
     job.results = results.decode("utf8")

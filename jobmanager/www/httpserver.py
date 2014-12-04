@@ -9,6 +9,15 @@ from . import app, with_db_session
 def index():
     return app.send_static_file('index.html')
 
+@app.route("/job_stats/")
+@with_db_session
+def get_job_statistics(session):
+    q = session.query(Job).filter(Job.finished == None).filter(Job.submitted == None)
+    jobs_waiting = len([_ for _ in q.all()])
+    q = session.query(Job).filter(Job.finished == None).filter(Job.submitted != None)
+    jobs_running = len([_ for _ in q.all()])
+    return jsonify({'waiting': jobs_waiting, 'running': jobs_running})
+
 
 @app.route("/jobs/<job_id>/results", methods=['GET'])
 @with_db_session

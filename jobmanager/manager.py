@@ -1,6 +1,7 @@
 import argparse
 import json
 import yaml
+import uuid
 import logging
 from logging import FileHandler
 import datetime
@@ -14,7 +15,7 @@ from stompest.async import Stomp
 from stompest.async.listener import (SubscriptionListener, ErrorListener,
                                      ConnectListener, DisconnectListener,
                                      HeartBeatListener)
-
+from stompest.sync import Stomp as StompSync
 from jobmanager.models import (Base, JobNotFound,
                                add_job, get_job, get_jobs, update_job_comp,
                                update_job_results, update_job_running,
@@ -213,7 +214,7 @@ class JobManager(object):
         reply_to = '/remote-temp-topic/%s' % topic_name
         job_id = body.get('jobID')
         session_id = frame.headers['session-id']
-        self.schedule_job(job_id, frame.headers, frame.body
+        self.schedule_job(job_id, frame.headers, frame.body,
                           session_id=session_id, reply_to=reply_to)
 
     def handle_client_cmd_msg(self, frame):
@@ -267,7 +268,7 @@ class JobManager(object):
         with self.session_scope() as session:
             add_job(session, job_id, body, json.dumps(headers), session_id,
                     reply_to=reply_to)
-        self.send_to(TOPICS['comp_topic'], headers, json.dumps(body),
+        self.send_to(TOPICS['comp_topic'], headers, body,
                      reply_to=TOPICS['jobmanager_topic'])
 
     def reschedule_job(self, job_id):
@@ -325,19 +326,6 @@ class JobManager(object):
                                      "expired, rescheduling" % job.job_id)
                         self.reschedule_job(job.job_id)
 
-    def generate_load(self):
-        {u'username': u'chipster', u'session-id':
-                u'6c52c589-c1a5-4038-9c9a-6b6d203628a5', u'destination':
-                u'/topic/authorised-request-topic', u'timestamp':
-                u'1417607038606', u'expires': u'0', u'persistent': u'true',
-                u'class': u'fi.csc.microarray.messaging.message.JobMessage',
-                u'priority': u'4', u'multiplex-channel': u'null', u'reply-to':
-                u'/remote-temp-topic/ID:tldr-51251-1417535328261-3:1:19',
-                u'message-id': u'eb1bb5b0-fde1-4780-8ab3-d9cafa1bfb0e',
-                u'transformation': u'jms-map-json'}
-        {"map":{"entry":[{"string":["payload_input","9def6449-766c-4a73-a3b2-0a3018d00f78"]},{"string":["analysisID","test-data-in.R"]},{"string":["jobID","6ec473a3-0470-454b-a75b-4846c896a79e"]}]}}
-
-
     @contextmanager
     def session_scope(self):
         session = self.sessionmaker()
@@ -352,6 +340,14 @@ class JobManager(object):
             session.close()
 
 
+def generate_load(client):
+    job_id = uuid.uuid4().hex
+    session_id = "91788a65-57f9-41ed-8a0e-0302e16e2eed"
+    headers = {u'username': u'chipster', u'session-id': session_id, u'destination': TOPICS['comp_topic'], u'timestamp': u'1417607038606', u'expires': u'0', u'persistent': u'true', u'class': u'fi.csc.microarray.messaging.message.JobMessage', u'priority': u'4', u'multiplex-channel': u'null', u'reply-to': TOPICS['jobmanager_topic'], u'message-id': '%s' % uuid.uuid4().hex, u'transformation': u'jms-map-json', u'reply-to': TOPICS['jobmanager_topic']}
+    body = {"map":{"entry":[{"string":["payload_input","9def6449-766c-4a73-a3b2-0a3018d00f78"]},{"string":["analysisID","test-data-in.R"]},{"string":["jobID", job_id]}]}}
+    client.send(TOPICS['comp_topic'], headers=headers, body=json.dumps(body))
+
+
 def main():
     logging.basicConfig()
     logging.getLogger().setLevel(logging.INFO)
@@ -361,6 +357,7 @@ def main():
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--logfile')
     parser.add_argument('--purge', action='store_true')
+    parser.add_argument('--loadgen', action='store_true')
     args = parser.parse_args()
 
     if args.logfile:
@@ -368,14 +365,14 @@ def main():
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
-
+    
     config = yaml.load(open(args.config_file))
     sessionmaker = config_to_db_session(config, Base)
 
     if args.purge:
         purge_completed_jobs(sessionmaker())
         return
-
+        
     stomp_endpoint = config['stomp_endpoint']
     stomp_login = config['stomp_login']
     stomp_password = config['stomp_password']
@@ -385,6 +382,14 @@ def main():
     for topic in ['jobmanager_topic', 'client_topic', 'comp_topic', 'comp_admin_topic']:
         if topic in config:
             TOPICS[topic] = config[topic]
+
+    if args.loadgen:
+        jm = StompSync(stomp_config)
+        jm.connect()
+        generate_load(jm)
+        jm.disconnect()
+        return
+
     jm = JobManager(sessionmaker, config=stomp_config)
     jm.run()
 
