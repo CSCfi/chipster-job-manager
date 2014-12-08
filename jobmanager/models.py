@@ -150,7 +150,6 @@ def update_job_rescheduled(session, job_id):
         raise RuntimeError("cannot reschedule finished job")
     now = datetime.datetime.utcnow()
     job.rescheduled = now
-    job.submitted = now
     job.retries = job.retries + 1
     job.state = 'RESCHEDULED'
     job.seen = None

@@ -48,11 +48,11 @@ class ReplyToResolutionException(Exception):
 class JobManagerErrorLister(ErrorListener):
     # E.g. trying to send to disconnected client
     def onError(self, connection, frame):
-        logging.warn("JM AMQ Connection Error")
+        logging.info("JM AMQ Connection Error")
 
     # E.g. AMQ connection problem
     def onConnectionLost(self, connection, reason):
-        logging.warn("JM AMQ Connection Lost")
+        logging.info("JM AMQ Connection Lost")
         reactor.callFromThread(reactor.stop)
 
 
@@ -168,8 +168,6 @@ class JobManager(object):
                 logging.info("job %s in error state %s" %
                              (job_id, exit_state))
                 job = update_job_results(session, job_id, frame.body, exit_state)
-        logging.info("job %s in state %s sending results to %s" %
-                     (job_id, exit_state, job.reply_to))
         self.send_to(job.reply_to, frame.headers, frame.body)
 
     def handle_joblog_msg(self, frame, body):
@@ -206,8 +204,6 @@ class JobManager(object):
             self.send_to(job.reply_to, headers, frame.body)
 
     def handle_client_job_msg(self, frame):
-        print frame.headers
-        print frame.body
         frame_body = json.loads(frame.body)
         body = parse_msg_body(frame_body)
         topic_name = frame.headers['reply-to'].split('/')[-1]
@@ -275,10 +271,10 @@ class JobManager(object):
         with self.session_scope() as session:
             job = get_job(session, job_id)
             if job.retries >= MAX_JOB_RETRIES:
-                job.finished = datetime.datetime.utcnow()
-                job.results = populate_job_result_body(job_id, error_msg='maximum number of job submits exceeded, available chipster-comps cannot run the job')
+                results = populate_job_result_body(job_id, error_msg='maximum number of job submits exceeded, available chipster-comps cannot run the job')
+                update_job_results(session, job_id, results, 'FAILED')
                 headers = populate_headers(job.reply_to, RESULT_MESSAGE)
-                self.send_to(job.reply_to, headers, job.results)
+                self.send_to(job.reply_to, headers, results)
             else:
                 headers = json.loads(job.headers)
                 self.send_to(TOPICS['comp_topic'], headers, job.description, reply_to=TOPICS['jobmanager_topic'])
@@ -343,9 +339,10 @@ class JobManager(object):
 def generate_load(client):
     job_id = uuid.uuid4().hex
     session_id = "91788a65-57f9-41ed-8a0e-0302e16e2eed"
-    headers = {u'username': u'chipster', u'session-id': session_id, u'destination': TOPICS['comp_topic'], u'timestamp': u'1417607038606', u'expires': u'0', u'persistent': u'true', u'class': u'fi.csc.microarray.messaging.message.JobMessage', u'priority': u'4', u'multiplex-channel': u'null', u'reply-to': TOPICS['jobmanager_topic'], u'message-id': '%s' % uuid.uuid4().hex, u'transformation': u'jms-map-json', u'reply-to': TOPICS['jobmanager_topic']}
-    body = {"map":{"entry":[{"string":["payload_input","9def6449-766c-4a73-a3b2-0a3018d00f78"]},{"string":["analysisID","test-data-in.R"]},{"string":["jobID", job_id]}]}}
-    client.send(TOPICS['comp_topic'], headers=headers, body=json.dumps(body))
+    destination = TOPICS['client_topic']
+    headers = {u'username': u'chipster', u'session-id': session_id, u'destination': destination, u'timestamp': u'1417607038606', u'expires': u'0', u'persistent': u'true', u'class': u'fi.csc.microarray.messaging.message.JobMessage', u'priority': u'4', u'multiplex-channel': u'null', u'reply-to': TOPICS['jobmanager_topic'], u'message-id': '%s' % uuid.uuid4().hex, u'transformation': u'jms-map-json', u'reply-to': '/remote-temp-topic/foobar'}
+    body = {"map": {"entry": [{"string": ["payload_input", "9def6449-766c-4a73-a3b2-0a3018d00f78"]}, {"string": ["analysisID", "test-data-in.R"]}, {"string": ["jobID", job_id]}]}}
+    client.send(destination, headers=headers, body=json.dumps(body))
 
 
 def main():
@@ -365,14 +362,14 @@ def main():
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
-    
+
     config = yaml.load(open(args.config_file))
     sessionmaker = config_to_db_session(config, Base)
 
     if args.purge:
         purge_completed_jobs(sessionmaker())
         return
-        
+
     stomp_endpoint = config['stomp_endpoint']
     stomp_login = config['stomp_login']
     stomp_password = config['stomp_password']
@@ -385,7 +382,7 @@ def main():
 
     if args.loadgen:
         jm = StompSync(stomp_config)
-        jm.connect()
+        jm.connect(versions=[StompSpec.VERSION_1_0])
         generate_load(jm)
         jm.disconnect()
         return
