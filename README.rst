@@ -30,8 +30,8 @@ To learn more about Chipster refer to:
 Developing
 ==========
 
-Run tests
+Run tests (requires tox)
     ``tox .``
 
-Run coverage for tests
+Run coverage for tests (requires nose, pytest, coverage)
     ``nosetests --cover-package=jobmanager --with-coverage``
