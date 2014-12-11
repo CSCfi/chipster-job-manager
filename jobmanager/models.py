@@ -54,9 +54,15 @@ class Job(Base):
                     except:
                         pass
                     if k in ('submitted'):
-                        d['queuing_time'] = (self.submitted - self.created).total_seconds()
+                        try:
+                            d['queuing_time'] = (self.submitted - self.created).total_seconds()
+                        except:
+                            pass
                     if k in ('finished'):
-                        d['execution_time'] = (self.finished - self.submitted).total_seconds()
+                        try:
+                            d['execution_time'] = (self.finished - self.submitted).total_seconds()
+                        except:
+                            pass
         return d
 
     def __unicode__(self):

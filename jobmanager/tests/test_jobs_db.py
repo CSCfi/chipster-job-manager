@@ -1,6 +1,6 @@
 from __future__ import unicode_literals
 import pytest
-
+import datetime
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
@@ -8,7 +8,7 @@ from jobmanager.models import Base, JobNotFound
 from jobmanager.models import (add_job, get_job, get_jobs, update_job_comp,
                                update_job_results, update_job_reply_to,
                                update_job_rescheduled, update_job_cancelled,
-                               update_job_running)
+                               update_job_running, purge_completed_jobs)
 
 
 class TestDB(object):
@@ -52,7 +52,8 @@ class TestDB(object):
     def test_get_all_jobs(self):
         add_job(self.session, "abc42", "analysis job", "{}", "session_id")
         add_job(self.session, "abc43", "analysis job", "{}", "session_id")
-        update_job_results(self.session, "abc43", "results")
+        update_job_comp(self.session, "abc43", "analysis_server_1")
+        update_job_results(self.session, "abc43", "results", 'COMPLETED')
         jobs_active = [x for x in get_jobs(self.session)]
         jobs_all = [x for x in get_jobs(self.session, include_finished=True)]
         assert len(jobs_active) == 1
@@ -91,7 +92,7 @@ class TestDB(object):
 
     def test_reschedule_finished_job(self):
         add_job(self.session, "abc42", "analysis job", "{}", "session_id")
-        update_job_results(self.session, "abc42", "results")
+        update_job_results(self.session, "abc42", "results", "COMPLETED")
         with pytest.raises(RuntimeError):
             update_job_rescheduled(self.session, "abc42")
 
@@ -115,6 +116,47 @@ class TestDB(object):
 
     def test_cancel_completed(self):
         add_job(self.session, "abc42", "analysis job", "{}", "session_id")
-        update_job_results(self.session, "abc42", "results")
+        update_job_results(self.session, "abc42", "results", "CANCELLED")
         with pytest.raises(RuntimeError):
             update_job_cancelled(self.session, "abc42")
+
+    def test_purge_completed(self):
+        add_job(self.session, "abc42", "analysis job", "{}", "session_id")
+        jobs = [x for x in get_jobs(self.session)]
+        assert len(jobs) == 1
+        job = get_job(self.session, "abc42")
+        job.created = datetime.datetime.now() - datetime.timedelta(10000)
+        update_job_results(self.session, "abc42", "results", "COMPLETED")
+        job.finished = datetime.datetime.now() - datetime.timedelta(10000)
+        self.session.merge(job)
+        purge_completed_jobs(self.session)
+        jobs =  [x for x in get_jobs(self.session)]
+        assert len(jobs) == 0
+
+    def test_dict_representation(self):
+        add_job(self.session, 
+            "daeadeb7-31c0-4279-a784-79bb5e35f73c", 
+            ('{"map":{"entry":[{"string":["analysisID","SortGtf.java"]},'
+            '{"string":["payload_unsorted.gtf","adf2c6af-fdf2-44e5-b4ad-0c3602653228"]},'
+            '{"string":["jobID","daeadeb7-31c0-4279-a784-79bb5e35f73c"]}]}}'),
+            ('{"username": "test", "timestamp": "1417607038606", "expires":'
+             '"0", "reply-to": "/topic/foo", "class": '
+             '"fi.csc.microarray.messaging.message.JobMessage", "session-id":'
+             '"session_id", "destination": "/topic/bar", "persistent": "true",'
+             '"priority": "4", "multiplex-channel": "null", "message-id":'
+             '"8a96be12f61641b998fd57939e38bf98", "transformation":'
+             '"jms-map-json"}'),
+            "session_id")
+        update_job_results(self.session,
+            'daeadeb7-31c0-4279-a784-79bb5e35f73c',
+            ('{"map":{"entry":[{"string":"errorMessage","null":""},'
+            '{"string":["sourceCode","chipster"]},{"string":["outputText","x"]},'
+            '{"string":["jobId","daeadeb7-31c0-4279-a784-79bb5e35f73c"]},'
+            '{"string":"heartbeat","boolean":false},'
+            '{"string":["payload_data-input-test.txt","b80b9f0a-9195-4447-a30d-403762d065ac"]},'
+            '{"string":["stateDetail",""]},{"string":["exitState","COMPLETED"]}]}}'),
+            'COMPLETED')
+        job = get_job(self.session, 'daeadeb7-31c0-4279-a784-79bb5e35f73c')
+        d = job.to_dict()
+        assert d['analysis_id'] == u'SortGtf.java'
+        assert d['job_id'] == 'daeadeb7-31c0-4279-a784-79bb5e35f73c'
