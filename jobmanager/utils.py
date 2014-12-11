@@ -10,7 +10,7 @@ CMD_MESSAGE = 'fi.csc.microarray.messaging.message.CommandMessage'
 RESULT_MESSAGE = 'fi.csc.microarray.messaging.message.ResultMessage'
 STATUS_MESSAGE = 'fi.csc.microarray.messaging.message.ServerStatusMessage'
 JOBLOG_MESSAGE = 'fi.csc.microarray.messaging.message.JobLogMessage'
-
+JSON_MESSAGE = 'fi.csc.microarray.messaging.message.JsonMessage'
 
 def populate_headers(destination, msg_class, session_id='null', timestamp=None,
                      reply_to=None):
@@ -82,18 +82,29 @@ def populate_cancel_body(job_id):
             '{"string":["parameter0", "%s"]}]}}' % job_id)
 
 
-def populate_joblog_body(job):
-    return ('{"map": {"entry": ['
-            '{"string": ["startTime", "%s"]},'
-            '{"string": "errorMessage", "null": ""},'
-            '{"string": ["operation", "%s"]},'
-            '{"string": ["username", "%s"]},'
-            '{"string": ["jobId", "%s"]}, {"string": "outputText", "null": ""},'
-            '{"string": ["compHost", "%s"]}, {"string": ["stateDetail",'
-            '"running"]}, {"string": ["exitState", "RUNNING"]}'
-            ']}}' % (job.created.strftime("%b %d, %Y %I:%M:%S %p"),
-                     job.analysis_id, job.username, job.job_id,
-                     job.comp_id))
+def populate_joblog_body(jobs):
+    def parse_joblog_fields(job):
+        error_message = ''
+        state_detail = ''
+        output_text = ''
+        try:
+            results = parse_msg_body(json.loads(job.results))
+        except:
+            pass
+        error_message = results.get('errorMessage', '')
+        state_detail = results.get('stateDetail', '')
+        output_text = results.get('outputText', '')
+        return (error_message, job.created.strftime("%b %d, %Y %I:%M:%S %p"),
+                job.analysis_id, job.username, output_text, job.job_id,
+                job.comp_id, state_detail,
+                job.finished.strftime("%b %d, %Y %I:%M:%S %p"), job.state)
+
+    return ('{"map":{"entry":{"string":["json","[%s]"]}}}' % ','.join(
+        '{\"errorMessage\":\"%s\",\"startTime\":\"%s\",\"operation\":\"%s\",'
+        '\"username\":\"%s\",\"outputText\":\"outputA\",\"jobId\":\"%s\",'
+        '\"compHost\":\"%s\",\"endTime\":\"%s\",\"stateDetail\":\"%s\",'
+        '\"exitState\":\"%s\"},'
+        ']"]}}}' % parse_joblog_fields(job) for job in jobs))
 
 
 def populate_job_running_body(job_id):

@@ -136,13 +136,16 @@ class JobManager(object):
     def process_jobmanager_admin_message(self, client, frame):
         msg_type = msg_type_from_headers(frame.headers)
         if msg_type == 'CmdMessage':
-            topic_name = frame.headers['reply-to'].split('/')[-1]
-            reply_to = '/remote-temp-topic/%s' % topic_name
-            headers = populate_headers(reply_to, JOBLOG_MESSAGE)
-            with self.session_scope() as session:
-                for job in get_jobs(session):
-                    self.send_to(reply_to, headers=headers,
-                                 body=json.dumps(populate_job_result_body(job)))
+            self.handle_admin_cmd_msg(frame)
+
+    def handle_admin_cmd_msg(self, frame):
+        topic_name = frame.headers['reply-to'].split('/')[-1]
+        reply_to = '/remote-temp-topic/%s' % topic_name
+        headers = populate_headers(reply_to, JOBLOG_MESSAGE)
+        with self.session_scope() as session:
+            for job in get_jobs(session):
+                self.send_to(reply_to, headers=headers,
+                             body=json.dumps(populate_job_result_body(job)))
 
     def handle_result_msg(self, frame, body):
         job_id = body.get('jobId')
