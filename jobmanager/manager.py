@@ -117,13 +117,12 @@ class JobManager(object):
         msg_type = msg_type_from_headers(headers)
         if msg_type == 'ResultMessage':
             self.handle_result_msg(frame, body)
-        elif msg_type == 'StatusMessage':
-            # { u'host': u'<hostname>', u'hostId': u'<hostId>'}
-            pass
         elif msg_type == 'JobLogMessage':
             self.handle_joblog_msg(headers, body)
         elif msg_type == 'CmdMessage':
             self.handle_comp_cmd_msg(frame, body)
+        elif msg_type == 'StatusMessage':
+            pass
         else:
             try:
                 client_topic = self.resolve_reply_to(body)
@@ -141,11 +140,25 @@ class JobManager(object):
     def handle_admin_cmd_msg(self, frame):
         topic_name = frame.headers['reply-to'].split('/')[-1]
         reply_to = '/remote-temp-topic/%s' % topic_name
-        headers = populate_headers(reply_to, JOBLOG_MESSAGE)
-        with self.session_scope() as session:
-            for job in get_jobs(session):
-                self.send_to(reply_to, headers=headers,
-                             body=json.dumps(populate_job_result_body(job)))
+        msg = parse_msg_body(frame_body)
+        command = msg.get('command')
+        if command == 'get-status-report':
+            headers = populate_headers(reply_to, STATUS_MESSAGE)
+            self.self_to(reply_to, headers=headers,
+                         body=json.dumps({"map": {"entry": [{"string": ["status-report", "ok"]}]}}))
+        elif command == 'purge-old-jobs':
+            self.purge_old_jobs()
+        elif comamnd == 'get-running-jobs':
+            headers = populate_headers(reply_to, JOBLOG_MESSAGE)
+            with self.session_scope() as session:
+                for job in get_jobs(session):
+                    self.send_to(reply_to, headers=headers,
+                                 body=json.dumps(populate_job_result_body(job)))
+        elif command == 'cancel':
+            job_id = msg.get('parameter0')
+            session_id = headers.get('session-id')
+            self.cancel_job(job_id, session_id)
+
 
     def handle_result_msg(self, frame, body):
         job_id = body.get('jobId')
@@ -209,8 +222,6 @@ class JobManager(object):
             self.send_to(job.reply_to, headers, frame.body)
 
     def handle_client_job_msg(self, frame):
-        print frame.headers
-        print frame.body
         frame_body = json.loads(frame.body)
         body = parse_msg_body(frame_body)
         topic_name = frame.headers['reply-to'].split('/')[-1]
@@ -297,6 +308,10 @@ class JobManager(object):
             except JobNotFound:
                 logging.warn("trying to cancel a non-existing job")
         self.send_to(TOPICS['comp_topic'], headers, body)
+
+    def purge_old_jobs(self):
+        with self.session_scope() as session:
+            purge_completed_jobs(session)
 
     def run_periodic_checks(self):
         if self.client:
