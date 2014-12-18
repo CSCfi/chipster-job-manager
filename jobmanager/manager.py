@@ -24,9 +24,10 @@ from jobmanager.models import (Base, JobNotFound,
 from jobmanager.utils import (parse_msg_body, msg_type_from_headers,
                               populate_comp_status_body, populate_headers,
                               populate_comp_status_headers, populate_msg_body,
-                              populate_job_running_body, populate_job_result_body,
-                              config_to_db_session,
-                              CMD_MESSAGE, RESULT_MESSAGE, JOBLOG_MESSAGE)
+                              populate_job_running_body, populate_cancel_body,
+                              populate_job_result_body, config_to_db_session,
+                              CMD_MESSAGE, RESULT_MESSAGE, JOBLOG_MESSAGE,
+                              STATUS_MESSAGE)
 
 PERIODIC_CHECK_INTERVAL = 5.0
 JOB_DEAD_AFTER = 60
@@ -140,15 +141,31 @@ class JobManager(object):
     def handle_admin_cmd_msg(self, frame):
         topic_name = frame.headers['reply-to'].split('/')[-1]
         reply_to = '/remote-temp-topic/%s' % topic_name
-        msg = parse_msg_body(frame_body)
+        try:
+            frame_body = json.loads(frame.body)
+            msg = parse_msg_body(frame_body)
+        except Exception, e:
+            logging.warn('unable to parse frame body: %s' % e)
+
         command = msg.get('command')
+        # XXX: Admin Web messages have no standard schema, if no command can be
+        # found in message try a bit harder...
+        if not command:
+            try:
+                check, command = msg.get('string')
+                if check != 'command':
+                    logging.warn('invalid message: %s' % msg)
+                    return
+            except:
+                logging.warn('invalid message: %s' % msg)
+                return
         if command == 'get-status-report':
             headers = populate_headers(reply_to, STATUS_MESSAGE)
             self.self_to(reply_to, headers=headers,
                          body=json.dumps({"map": {"entry": [{"string": ["status-report", "ok"]}]}}))
         elif command == 'purge-old-jobs':
             self.purge_old_jobs()
-        elif comamnd == 'get-running-jobs':
+        elif command == 'get-running-jobs':
             headers = populate_headers(reply_to, JOBLOG_MESSAGE)
             with self.session_scope() as session:
                 for job in get_jobs(session):
@@ -158,7 +175,6 @@ class JobManager(object):
             job_id = msg.get('parameter0')
             session_id = headers.get('session-id')
             self.cancel_job(job_id, session_id)
-
 
     def handle_result_msg(self, frame, body):
         job_id = body.get('jobId')
@@ -383,14 +399,14 @@ def main():
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
-    
+
     config = yaml.load(open(args.config_file))
     sessionmaker = config_to_db_session(config, Base)
 
     if args.purge:
         purge_completed_jobs(sessionmaker())
         return
-        
+
     stomp_endpoint = config['stomp_endpoint']
     stomp_login = config['stomp_login']
     stomp_password = config['stomp_password']
