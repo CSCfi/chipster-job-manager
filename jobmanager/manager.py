@@ -26,8 +26,9 @@ from jobmanager.utils import (parse_msg_body, msg_type_from_headers,
                               populate_comp_status_headers, populate_msg_body,
                               populate_job_running_body, populate_cancel_body,
                               populate_job_result_body, config_to_db_session,
+                              populate_cancel_body,
                               CMD_MESSAGE, RESULT_MESSAGE, JOBLOG_MESSAGE,
-                              STATUS_MESSAGE)
+                              STATUS_MESSAGE, JSON_MESSAGE)
 
 PERIODIC_CHECK_INTERVAL = 5.0
 JOB_DEAD_AFTER = 60
@@ -160,21 +161,32 @@ class JobManager(object):
                 logging.warn('invalid message: %s' % msg)
                 return
         if command == 'get-status-report':
-            headers = populate_headers(reply_to, STATUS_MESSAGE)
-            self.self_to(reply_to, headers=headers,
-                         body=json.dumps({"map": {"entry": [{"string": ["status-report", "ok"]}]}}))
+            try:
+                headers = populate_headers(reply_to, STATUS_MESSAGE)
+                self.self_to(reply_to, headers=headers,
+                             body='{"map":{"entry":[{"string":["status-report","ok"]}]}}))')
+            except Exception, e:
+                logging.warn("get status report failed: %s" % e)
         elif command == 'purge-old-jobs':
-            self.purge_old_jobs()
+            try:
+                self.purge_old_jobs()
+            except Exception, e:
+                logging.warn("purge old jobs failed: %s" % e)
         elif command == 'get-running-jobs':
-            headers = populate_headers(reply_to, JOBLOG_MESSAGE)
-            with self.session_scope() as session:
-                for job in get_jobs(session):
+            try:
+                headers = populate_headers(reply_to, JSON_MESSAGE)
+                with self.session_scope() as session:
                     self.send_to(reply_to, headers=headers,
-                                 body=json.dumps(populate_job_result_body(job)))
+                                 body=populate_job_result_body(get_jobs(session)))
+            except Exception, e:
+                logging.warn("get running jobs failed: %s" % e)
         elif command == 'cancel':
-            job_id = msg.get('parameter0')
-            session_id = headers.get('session-id')
-            self.cancel_job(job_id, session_id)
+            try:
+                job_id = msg.get('parameter0')
+                session_id = headers.get('session-id')
+                self.cancel_job(job_id, session_id)
+            except Exception, e:
+                logging.warn("cancel job failed: %s" % e)
 
     def handle_result_msg(self, frame, body):
         job_id = body.get('jobId')
@@ -383,7 +395,7 @@ def generate_load(client):
 
 
 def main():
-    logging.basicConfig()
+    logging.basicConfig(format='%(asctime)s %(message)s')
     logging.getLogger().setLevel(logging.INFO)
 
     parser = argparse.ArgumentParser()

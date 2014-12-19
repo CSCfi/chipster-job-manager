@@ -87,24 +87,30 @@ def populate_joblog_body(jobs):
         error_message = ''
         state_detail = ''
         output_text = ''
+        finished = ''
         try:
             results = parse_msg_body(json.loads(job.results))
         except:
             pass
+        if job.finished:
+            try:
+                finished = job.finished.strftime("%b %d, %Y %I:%M:%S %p")
+            except:
+                pass
+
         error_message = results.get('errorMessage', '')
         state_detail = results.get('stateDetail', '')
         output_text = results.get('outputText', '')
+
         return (error_message, job.created.strftime("%b %d, %Y %I:%M:%S %p"),
                 job.analysis_id, job.username, output_text, job.job_id,
-                job.comp_id, state_detail,
-                job.finished.strftime("%b %d, %Y %I:%M:%S %p"), job.state)
+                job.comp_id, finished, state_detail, job.state)
 
     return ('{"map":{"entry":{"string":["json","[%s]"]}}}' % ','.join(
-        '{\"errorMessage\":\"%s\",\"startTime\":\"%s\",\"operation\":\"%s\",'
-        '\"username\":\"%s\",\"outputText\":\"outputA\",\"jobId\":\"%s\",'
-        '\"compHost\":\"%s\",\"endTime\":\"%s\",\"stateDetail\":\"%s\",'
-        '\"exitState\":\"%s\"},'
-        ']"]}}}' % parse_joblog_fields(job) for job in jobs))
+            '{\\"rrorMessage\\":\\"%s\\",\\"startTime\\":\\"%s\\",\\"operation\\":\\"%s\\",'
+            '\\"username\\":\\"%s\\",\\"outputText\\":\\"%s\\",\\"jobId\\":\\"%s\\",'
+            '\\"compHost\\":\\"%s\\",\\"endTime\\":\\"%s\\",\\"stateDetail\\":\\"%s\\",'
+            '\\"exitState\\":\\"%s\\"}' % parse_joblog_fields(job) for job in jobs))
 
 
 def populate_job_running_body(job_id):
