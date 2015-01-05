@@ -71,8 +71,6 @@ def populate_msg_body(msg_type, as_id, job_id):
         assert RuntimeError("unknown message type")
 
 
-
-
 def populate_comp_status_body(command):
     return '{"map": {"entry": {"string": ["command", "%s"]}}}' % command
 
@@ -88,10 +86,12 @@ def populate_joblog_body(jobs):
         state_detail = ''
         output_text = ''
         finished = ''
-        try:
-            results = parse_msg_body(json.loads(job.results))
-        except:
-            pass
+        results = {}
+        if job.results:
+            try:
+                results = parse_msg_body(json.loads(job.results))
+            except:
+                pass
         if job.finished:
             try:
                 finished = job.finished.strftime("%b %d, %Y %I:%M:%S %p")
@@ -102,15 +102,19 @@ def populate_joblog_body(jobs):
         state_detail = results.get('stateDetail', '')
         output_text = results.get('outputText', '')
 
-        return (error_message, job.created.strftime("%b %d, %Y %I:%M:%S %p"),
-                job.analysis_id, job.username, output_text, job.job_id,
-                job.comp_id, finished, state_detail, job.state)
+        return {'errorMessage': error_message,
+                'startTime': job.created.strftime("%b %d, %Y %I:%M:%S %p"),
+                'operation': job.analysis_id,
+                'username': job.username,
+                'outputText': output_text,
+                'jobId': job.job_id,
+                'compHost': job.comp_id,
+                'endTime': finished,
+                'stateDetail': state_detail,
+                'exitState': job.state}
 
-    return ('{"map":{"entry":{"string":["json","[%s]"]}}}' % ','.join(
-            '{\\"rrorMessage\\":\\"%s\\",\\"startTime\\":\\"%s\\",\\"operation\\":\\"%s\\",'
-            '\\"username\\":\\"%s\\",\\"outputText\\":\\"%s\\",\\"jobId\\":\\"%s\\",'
-            '\\"compHost\\":\\"%s\\",\\"endTime\\":\\"%s\\",\\"stateDetail\\":\\"%s\\",'
-            '\\"exitState\\":\\"%s\\"}' % parse_joblog_fields(job) for job in jobs))
+    return ('{"map":{"entry":{"string":["json", %s]}}}' %
+            json.dumps(json.dumps([parse_joblog_fields(job) for job in jobs])))
 
 
 def populate_job_running_body(job_id):
@@ -131,6 +135,10 @@ def populate_job_result_body(job_id, exit_state='ERROR', error_msg=''):
             '{"string":"heartbeat","boolean":"false"},'
             '{"string": ["jobId", "%s"]},'
             '{"string": ["exitState", "%s"]}]}}' % (error_field_type, error_msg, job_id, exit_state))
+
+
+def populate_service_status_reply(host):
+    return {"map": {"entry": [{"string": ["command", "ping-reply"]}, {"string": ["parameter1", host]}, {"string": ["parameter0", "jobmanager"]}]}}
 
 
 def msg_type_from_headers(headers):
@@ -161,6 +169,9 @@ def parse_msg_body(msg):
     >>> d3 = {u'map': {u'entry': [{u'null': u'', u'string': u'errorMessage'}, {u'string': [u'jobId', u'7f03370e-714d-450d-8707-4cf4b478fadf']}, {u'string': [u'outputText', u'''data-input-test.txt")''']}, {u'string': [u'sourceCode', u'chipster.tools.path = "aa")']}, {u'string': [u'stateDetail', u'transferring output data']},{u'string': [u'exitState', u'RUNNING']}]}}
     >>> parse_msg_body(d3)
     {u'outputText': u'data-input-test.txt")', u'jobId': u'7f03370e-714d-450d-8707-4cf4b478fadf', u'sourceCode': u'chipster.tools.path = "aa")', u'exitState': u'RUNNING', u'stateDetail': u'transferring output data'}
+    >>> d4 = {u'map': {u'entry': [{u'string': [u'command', u'cancel']}, {u'string': [u'named-parameter-value0', u'96f7ab23-2fa8-4a81-8097-de99af1c74fa']}, {u'string': [u'named-parameter-key0', u'job-id']}]}}
+    >>> parse_msg_body(d4)
+    {u'job-id': u'96f7ab23-2fa8-4a81-8097-de99af1c74fa', u'command': u'cancel'}
     """
     entry = msg['map']['entry']
     if type(entry) is dict:

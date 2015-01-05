@@ -3,10 +3,11 @@ import json
 import yaml
 import uuid
 import logging
-from logging import FileHandler
+import socket
 import datetime
-from contextlib import contextmanager
 
+from logging import FileHandler
+from contextlib import contextmanager
 from twisted.internet import reactor, defer, task
 
 from stompest.config import StompConfig
@@ -26,9 +27,8 @@ from jobmanager.utils import (parse_msg_body, msg_type_from_headers,
                               populate_comp_status_headers, populate_msg_body,
                               populate_job_running_body, populate_cancel_body,
                               populate_job_result_body, config_to_db_session,
-                              populate_cancel_body,
-                              CMD_MESSAGE, RESULT_MESSAGE, JOBLOG_MESSAGE,
-                              STATUS_MESSAGE, JSON_MESSAGE)
+                              populate_joblog_body, CMD_MESSAGE,
+                              RESULT_MESSAGE, JSON_MESSAGE)
 
 PERIODIC_CHECK_INTERVAL = 5.0
 JOB_DEAD_AFTER = 60
@@ -40,6 +40,7 @@ TOPICS = {
     'jobmanager_topic': '/topic/jobmanager-topic',
     'jobmanager_admin_topic': '/topic/jobmanager-admin-topic',
     'comp_admin_topic': '/topic/comp-admin-topic',
+    'admin_topic': '/topic/admin-topic',
 }
 
 
@@ -96,8 +97,11 @@ class JobManager(object):
         self.client.subscribe(
             TOPICS['jobmanager_admin_topic'],
             headers,
-            listener=SubscriptionListener(self.process_jobmanager_admin_message,
-                                          ack=False))
+            listener=SubscriptionListener(self.process_jobmanager_admin_message, ack=False))
+        self.client.subscribe(
+            TOPICS['admin_topic'],
+            headers,
+            listener=SubscriptionListener(self.process_admin_message, ack=False))
 
     def process_client_message(self, client, frame):
         try:
@@ -134,18 +138,40 @@ class JobManager(object):
             except ReplyToResolutionException:
                 logging.warn("unable to resolve reply_to address")
 
+    def process_admin_message(self, client, frame):
+        admin_topic = TOPICS['admin_topic']
+        headers = populate_headers(admin_topic, CMD_MESSAGE)
+        try:
+            frame_body = json.loads(frame.body)
+            body = parse_msg_body(frame_body)
+            content = body.get('string')
+            if content:
+                msg_type, msg_command = content
+        except Exception as e:
+            logging.warn(e)
+            return
+
+        if msg_command == 'ping':
+            reply = populate_service_status_reply(socket.gethostname())
+            self.send_to(admin_topic, headers=headers, body=reply)
+
     def process_jobmanager_admin_message(self, client, frame):
         msg_type = msg_type_from_headers(frame.headers)
         if msg_type == 'CmdMessage':
             self.handle_admin_cmd_msg(frame)
 
     def handle_admin_cmd_msg(self, frame):
-        topic_name = frame.headers['reply-to'].split('/')[-1]
-        reply_to = '/remote-temp-topic/%s' % topic_name
+        reply_to = None
+        try:
+            topic_name = frame.headers['reply-to'].split('/')[-1]
+            reply_to = '/remote-temp-topic/%s' % topic_name
+        except Exception as e:
+            pass
+
         try:
             frame_body = json.loads(frame.body)
             msg = parse_msg_body(frame_body)
-        except Exception, e:
+        except Exception as e:
             logging.warn('unable to parse frame body: %s' % e)
 
         command = msg.get('command')
@@ -160,32 +186,47 @@ class JobManager(object):
             except:
                 logging.warn('invalid message: %s' % msg)
                 return
+
         if command == 'get-status-report':
             try:
-                headers = populate_headers(reply_to, STATUS_MESSAGE)
+                headers = populate_headers(reply_to, JSON_MESSAGE)
+                if not reply_to:
+                    logging.warn("get status report failed: no valid reply_to topic in request")
+                    return
+
                 self.self_to(reply_to, headers=headers,
-                             body='{"map":{"entry":[{"string":["status-report","ok"]}]}}))')
-            except Exception, e:
+                        body='{"map":{"entry":{"string":["json","ok"]}}}')
+            except Exception as e:
                 logging.warn("get status report failed: %s" % e)
         elif command == 'purge-old-jobs':
             try:
                 self.purge_old_jobs()
-            except Exception, e:
+            except Exception as e:
                 logging.warn("purge old jobs failed: %s" % e)
         elif command == 'get-running-jobs':
+            if not reply_to:
+                logging.warn("get running jobs failed: no valid reply_to topic in request")
+                return
+
             try:
                 headers = populate_headers(reply_to, JSON_MESSAGE)
                 with self.session_scope() as session:
                     self.send_to(reply_to, headers=headers,
-                                 body=populate_job_result_body(get_jobs(session)))
-            except Exception, e:
+                                 body=populate_joblog_body(get_jobs(session)))
+            except Exception as e:
                 logging.warn("get running jobs failed: %s" % e)
         elif command == 'cancel':
             try:
-                job_id = msg.get('parameter0')
-                session_id = headers.get('session-id')
+                job_id = parse_msg_body(frame_body).get('job-id')
+                session_id = frame.headers.get('session-id')
                 self.cancel_job(job_id, session_id)
-            except Exception, e:
+                with self.session_scope() as session:
+                    job = get_job(session, job_id)
+                if job.reply_to:
+                    headers = populate_headers(job.reply_to, RESULT_MESSAGE)
+                    reply_body = populate_job_result_body(job_id, exit_state='CANCELLED')
+                    self.send_to(job.reply_to, headers=headers, body=reply_body)
+            except Exception as e:
                 logging.warn("cancel job failed: %s" % e)
 
     def handle_result_msg(self, frame, body):
