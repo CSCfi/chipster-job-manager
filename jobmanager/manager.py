@@ -27,7 +27,8 @@ from jobmanager.utils import (parse_msg_body, msg_type_from_headers,
                               populate_comp_status_headers, populate_msg_body,
                               populate_job_running_body, populate_cancel_body,
                               populate_job_result_body, config_to_db_session,
-                              populate_joblog_body, CMD_MESSAGE,
+                              populate_joblog_body,
+                              populate_service_status_reply, CMD_MESSAGE,
                               RESULT_MESSAGE, JSON_MESSAGE)
 
 PERIODIC_CHECK_INTERVAL = 5.0
@@ -160,6 +161,7 @@ class JobManager(object):
         if msg_type == 'CmdMessage':
             self.handle_admin_cmd_msg(frame)
 
+
     def handle_admin_cmd_msg(self, frame):
         reply_to = None
         try:
@@ -175,27 +177,27 @@ class JobManager(object):
             logging.warn('unable to parse frame body: %s' % e)
 
         command = msg.get('command')
+
         # XXX: Admin Web messages have no standard schema, if no command can be
         # found in message try a bit harder...
         if not command:
             try:
                 check, command = msg.get('string')
-                if check != 'command':
-                    logging.warn('invalid message: %s' % msg)
-                    return
             except:
                 logging.warn('invalid message: %s' % msg)
                 return
 
+            if check != 'command':
+                logging.warn('invalid message: %s' % msg)
+                return
+
         if command == 'get-status-report':
+            if not reply_to:
+                logging.warn("get status report failed: no valid reply_to topic in request")
+                return
             try:
                 headers = populate_headers(reply_to, JSON_MESSAGE)
-                if not reply_to:
-                    logging.warn("get status report failed: no valid reply_to topic in request")
-                    return
-
-                self.self_to(reply_to, headers=headers,
-                        body='{"map":{"entry":{"string":["json","ok"]}}}')
+                self.self_to(reply_to, headers=headers, body='{"map":{"entry":{"string":["json","ok"]}}}')
             except Exception as e:
                 logging.warn("get status report failed: %s" % e)
         elif command == 'purge-old-jobs':
@@ -207,7 +209,6 @@ class JobManager(object):
             if not reply_to:
                 logging.warn("get running jobs failed: no valid reply_to topic in request")
                 return
-
             try:
                 headers = populate_headers(reply_to, JSON_MESSAGE)
                 with self.session_scope() as session:
@@ -427,11 +428,13 @@ class JobManager(object):
             session.close()
 
 
-def generate_load(client):
+def generate_load(client, session_id):
     job_id = uuid.uuid4().hex
-    session_id = "91788a65-57f9-41ed-8a0e-0302e16e2eed"
     headers = {u'username': u'chipster', u'session-id': session_id, u'destination': TOPICS['comp_topic'], u'timestamp': u'1417607038606', u'expires': u'0', u'persistent': u'true', u'class': u'fi.csc.microarray.messaging.message.JobMessage', u'priority': u'4', u'multiplex-channel': u'null', u'reply-to': TOPICS['jobmanager_topic'], u'message-id': '%s' % uuid.uuid4().hex, u'transformation': u'jms-map-json', u'reply-to': TOPICS['jobmanager_topic']}
-    body = {"map":{"entry":[{"string":["payload_input","9def6449-766c-4a73-a3b2-0a3018d00f78"]},{"string":["analysisID","test-data-in.R"]},{"string":["jobID", job_id]}]}}
+    body = {"map": {"entry": [
+        {"string": ["payload_input", "9def6449-766c-4a73-a3b2-0a3018d00f78"]},
+        {"string": ["analysisID", "test-data-in.R"]},
+        {"string": ["jobID", job_id]}]}}
     client.send(TOPICS['comp_topic'], headers=headers, body=json.dumps(body))
 
 
@@ -445,6 +448,8 @@ def main():
     parser.add_argument('--logfile')
     parser.add_argument('--purge', action='store_true')
     parser.add_argument('--loadgen', action='store_true')
+    parser.add_argument('--sessionid')
+    parser.add_argument('--httpserver', action='store_true')
     args = parser.parse_args()
 
     if args.logfile:
@@ -456,25 +461,27 @@ def main():
     config = yaml.load(open(args.config_file))
     sessionmaker = config_to_db_session(config, Base)
 
-    if args.purge:
-        purge_completed_jobs(sessionmaker())
-        return
-
     stomp_endpoint = config['stomp_endpoint']
     stomp_login = config['stomp_login']
     stomp_password = config['stomp_password']
 
     stomp_config = StompConfig(stomp_endpoint, login=stomp_login, passcode=stomp_password)
 
-    for topic in ['jobmanager_topic', 'client_topic', 'comp_topic', 'comp_admin_topic']:
-        if topic in config:
-            TOPICS[topic] = config[topic]
-
-    if args.loadgen:
+    if args.purge:
+        purge_completed_jobs(sessionmaker())
+        return
+    elif args.loadgen:
+        if not args.sessionid:
+            raise ValueError('parameter sessionid is required for load generator')
         jm = StompSync(stomp_config)
         jm.connect()
         generate_load(jm)
         jm.disconnect()
+        return
+    elif args.httpserver:
+        from jobmanager.www import app
+        app.config['DB'] = sessionmaker
+        app.run()
         return
 
     jm = JobManager(sessionmaker, config=stomp_config)
