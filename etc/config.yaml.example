@@ -1,6 +1,6 @@
 debug: True
 database_dialect: "sqlite"
-database_connect_string: "/db.sqlite"
-stomp_endpoint: "tcp://127.0.0.1:61613"
+database_connect_string: "/var/run/db.sqlite"
+stomp_endpoint: "tcp://127.0.0.1:61613?startupMaxReconnectAttempts=100,initialReconnectDelay=5000,maxReconnectDelay=5000,maxReconnectAttempts=100"
 stomp_login: "loginname"
 stomp_password: "password"
