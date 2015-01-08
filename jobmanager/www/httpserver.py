@@ -9,6 +9,7 @@ from . import app, with_db_session
 def index():
     return app.send_static_file('index.html')
 
+
 @app.route("/job_stats/")
 @with_db_session
 def get_job_statistics(session):
@@ -53,22 +54,28 @@ def jobs(session):
         query = query.filter(Job.finished == None)
     return json.dumps([job.to_dict() for job in query.all()])
 
+
 @app.route("/jobs/", methods=['DELETE'])
 @with_db_session
 def purge_jobs(session):
     purge_completed_jobs(session)
     return jsonify({'result': True})
 
+
 @app.route('/system_info/', methods=['GET'])
 def system_info():
-    if not app.config['params']:
+    params = app.config.get('params', {})
+    dialect = params.get('database_dialect')
+    if not params or not dialect:
         return jsonify({'result': False, 'error_string': 'config parameters missing'})
 
     info = {}
-    if app.config['params']['database_dialect'] == 'sqlite':
+    if dialect == 'sqlite':
         db_size = os.path.getsize(app.config['params']['database_connect_string'])
         info['db_size'] = db_size / 1000
 
+    else:
+        return jsonify({'result': False, 'error_string': 'unknown database dialect'})
+
     info['result'] = True
     return jsonify(info)
-

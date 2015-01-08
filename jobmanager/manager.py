@@ -481,6 +481,7 @@ def main():
     elif args.httpserver:
         from jobmanager.www import app
         app.config['DB'] = sessionmaker
+        app.config['params'] = config
         app.run()
         return
 
