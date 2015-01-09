@@ -5,7 +5,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from jobmanager.models import Base, JobNotFound
-from jobmanager.models import (add_job, get_job, get_jobs, update_job_comp,
+from jobmanager.models import (add_job, get_job, get_jobs, get_next_from_queue, update_job_comp,
                                update_job_results, update_job_reply_to,
                                update_job_rescheduled, update_job_cancelled,
                                update_job_running, purge_completed_jobs)
@@ -39,6 +39,21 @@ class TestDB(object):
         add_job(self.session, "abc43", "analysis Job ", "{}", "session_id")
         jobs = [x for x in get_jobs(self.session)]
         assert len(jobs) == 2
+
+    def test_get_next_unsubmitted(self):
+        add_job(self.session, "abc42", "analysis job", "{}", "session_id")
+        jobs = [x for x in get_jobs(self.session)]
+        assert len(jobs) == 1
+        add_job(self.session, "abc43", "analysis Job ", "{}", "session_id")
+        jobs = [x for x in get_jobs(self.session)]
+        assert len(jobs) == 2
+        add_job(self.session, "abc44", "analysis Job ", "{}", "session_id")
+        jobs = [x for x in get_jobs(self.session)]
+        assert len(jobs) == 3
+        update_job_comp(self.session, "abc42", "analysis_server_1")
+        job = get_next_from_queue(self.session)
+        print job.job_id
+        assert job.job_id == "abc43"
 
     def test_submit_job_to_comp(self):
         add_job(self.session, "abc42", "analysis job", "{}", "session_id")
@@ -134,8 +149,8 @@ class TestDB(object):
         assert len(jobs) == 0
 
     def test_dict_representation(self):
-        add_job(self.session, 
-            "daeadeb7-31c0-4279-a784-79bb5e35f73c", 
+        add_job(self.session,
+            "daeadeb7-31c0-4279-a784-79bb5e35f73c",
             ('{"map":{"entry":[{"string":["analysisID","SortGtf.java"]},'
             '{"string":["payload_unsorted.gtf","adf2c6af-fdf2-44e5-b4ad-0c3602653228"]},'
             '{"string":["jobID","daeadeb7-31c0-4279-a784-79bb5e35f73c"]}]}}'),

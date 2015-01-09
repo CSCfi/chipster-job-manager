@@ -18,7 +18,7 @@ from stompest.async.listener import (SubscriptionListener, ErrorListener,
                                      HeartBeatListener)
 from stompest.sync import Stomp as StompSync
 from jobmanager.models import (Base, JobNotFound,
-                               add_job, get_job, get_jobs, update_job_comp,
+                               add_job, get_job, get_jobs, get_next_from_queue, update_job_comp,
                                update_job_results, update_job_running,
                                update_job_rescheduled, update_job_reply_to,
                                update_job_cancelled, purge_completed_jobs)
@@ -235,25 +235,15 @@ class JobManager(object):
         with self.session_scope() as session:
             job = get_job(session, job_id)
             exit_state = body.get('exitState')
-            if exit_state == 'COMPLETED':
-                logging.info("results ready for job %s" % job_id)
+            if exit_state in ('ERROR', 'COMPLETED', 'FAILED', 'FAILED_USER_ERROR'):
+                logging.info("results ready for job %s (%s)" % (job_id, exit_state))
                 job = update_job_results(session, job_id, frame.body, exit_state)
-            elif exit_state == 'ERROR':
-                logging.info("job %s in error state %s" % (job_id, body))
-                job = update_job_results(session, job_id, frame.body, exit_state)
+                self.submit_next_from_queue()
+
             elif exit_state == 'RUNNING':
                 logging.info("heartbeat for job %s" % job_id)
                 job = update_job_running(session, job_id)
-            elif exit_state == 'FAILED':
-                logging.info("job %s failed" % job_id)
-                try:
-                    update_job_results(session, job_id, frame.body, exit_state)
-                except Exception as e:
-                    logging.warn(e)
-            elif exit_state == 'FAILED_USER_ERROR':
-                logging.info("job %s in error state %s" %
-                             (job_id, exit_state))
-                job = update_job_results(session, job_id, frame.body, exit_state)
+
         logging.info("job %s in state %s sending results to %s" %
                      (job_id, exit_state, job.reply_to))
         self.send_to(job.reply_to, frame.headers, frame.body)
@@ -414,6 +404,12 @@ class JobManager(object):
                                      "expired, rescheduling" % job.job_id)
                         self.reschedule_job(job.job_id)
 
+    def submit_next_from_queue(self):
+        with self.session_scope() as session:
+            job = get_next_from_queue(session)
+            if job:
+                self.reschedule_job(job.job_id)
+
     @contextmanager
     def session_scope(self):
         session = self.sessionmaker()
@@ -430,12 +426,12 @@ class JobManager(object):
 
 def generate_load(client, session_id):
     job_id = uuid.uuid4().hex
-    headers = {u'username': u'chipster', u'session-id': session_id, u'destination': TOPICS['comp_topic'], u'timestamp': u'1417607038606', u'expires': u'0', u'persistent': u'true', u'class': u'fi.csc.microarray.messaging.message.JobMessage', u'priority': u'4', u'multiplex-channel': u'null', u'reply-to': TOPICS['jobmanager_topic'], u'message-id': '%s' % uuid.uuid4().hex, u'transformation': u'jms-map-json', u'reply-to': TOPICS['jobmanager_topic']}
+    headers = {u'username': u'chipster', u'session-id': session_id,            u'destination': TOPICS['client_topic'], u'timestamp':            u'1417607038606', u'expires': u'0', u'persistent': u'true',            u'class': u'fi.csc.microarray.messaging.message.JobMessage',            u'priority': u'4', u'multiplex-channel': u'null', u'reply-to':            TOPICS['jobmanager_topic'], u'message-id': '%s' % uuid.uuid4().hex, u'transformation': u'jms-map-json', u'reply-to': '/remote-temp-topic/ID:tldr-35781-1420456675692-3:1:8'}
     body = {"map": {"entry": [
-        {"string": ["payload_input", "9def6449-766c-4a73-a3b2-0a3018d00f78"]},
+        {"string": ["payload_input", "0f847d18-4d3b-4a0d-8c72-665f67699cf7"]},
         {"string": ["analysisID", "test-data-in.R"]},
         {"string": ["jobID", job_id]}]}}
-    client.send(TOPICS['comp_topic'], headers=headers, body=json.dumps(body))
+    client.send(TOPICS['client_topic'], headers=headers, body=json.dumps(body))
 
 
 def main():
@@ -475,7 +471,7 @@ def main():
             raise ValueError('parameter sessionid is required for load generator')
         jm = StompSync(stomp_config)
         jm.connect()
-        generate_load(jm)
+        generate_load(jm, args.sessionid)
         jm.disconnect()
         return
     elif args.httpserver:
