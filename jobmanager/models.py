@@ -86,6 +86,9 @@ def get_job(session, job_id):
     return job
 
 
+def get_next_from_queue(session):
+    return session.query(Job).filter(Job.submitted == None).order_by(Job.id).first()
+
 def add_job(session, job_id, description, headers, session_id, reply_to=None):
     desc = {}
     desc['job_id'] = job_id
