@@ -76,20 +76,21 @@ def get_jobs(session, include_finished=False):
     if include_finished:
         return session.query(Job).all()
     else:
-        return session.query(Job).filter(Job.finished == None)
+        return session.query(Job).filter_by(finished=None)
 
 
 def get_job(session, job_id):
-    job = session.query(Job).filter(Job.job_id == job_id).first()
+    job = session.query(Job).filter_by(job_id=job_id).first()
     if not job:
         raise JobNotFound(job_id)
     return job
 
 
 def get_next_from_queue(session):
-    return session.query(Job).filter(Job.submitted == None).order_by(Job.id).first()
+    return session.query(Job).filter_by(submitted=None).order_by(Job.id).first()
 
-def add_job(session, job_id, description, headers, session_id, reply_to=None):
+
+def add_job(session, job_id, description, headers, session_id, username, reply_to=None):
     desc = {}
     desc['job_id'] = job_id
     desc['description'] = description
@@ -98,6 +99,7 @@ def add_job(session, job_id, description, headers, session_id, reply_to=None):
     desc['created'] = datetime.datetime.utcnow()
     desc['headers'] = headers
     desc['state'] = 'NEW'
+    desc['username'] = username
     desc['reply_to'] = reply_to
     desc['session_id'] = session_id
     job = Job(**desc)

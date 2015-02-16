@@ -203,6 +203,7 @@ class JobManager(object):
                 logging.warn("get status report failed: %s" % e)
         elif command == 'purge-old-jobs':
             try:
+
                 self.purge_old_jobs()
             except Exception as e:
                 logging.warn("purge old jobs failed: %s" % e)
@@ -342,7 +343,7 @@ class JobManager(object):
     def schedule_job(self, job_id, headers, body, session_id, reply_to):
         with self.session_scope() as session:
             add_job(session, job_id, body, json.dumps(headers), session_id,
-                    reply_to=reply_to)
+                    headers.get('username'), reply_to=reply_to)
         self.send_to(TOPICS['comp_topic'], headers, body,
                      reply_to=TOPICS['jobmanager_topic'])
 
