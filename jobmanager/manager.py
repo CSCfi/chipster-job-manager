@@ -65,6 +65,21 @@ def listeners():
             HeartBeatListener()]
 
 
+def parse_command(msg):
+        # XXX: Admin Web messages have no standard schema, if no command can be
+        # found in message try a bit harder...
+        command = msg.get('command')
+        if not command:
+            try:
+                check, command = msg.get('string')
+            except:
+                raise ValueError('invalid message: %s' % msg)
+
+            if check != 'command':
+                raise ValueError('invalid message: %s' % msg)
+        return command
+
+
 class JobManager(object):
 
     def __init__(self, sessionmaker, config=None):
@@ -161,7 +176,6 @@ class JobManager(object):
         if msg_type == 'CmdMessage':
             self.handle_admin_cmd_msg(frame)
 
-
     def handle_admin_cmd_msg(self, frame):
         reply_to = None
         try:
@@ -176,20 +190,7 @@ class JobManager(object):
         except Exception as e:
             logging.warn('unable to parse frame body: %s' % e)
 
-        command = msg.get('command')
-
-        # XXX: Admin Web messages have no standard schema, if no command can be
-        # found in message try a bit harder...
-        if not command:
-            try:
-                check, command = msg.get('string')
-            except:
-                logging.warn('invalid message: %s' % msg)
-                return
-
-            if check != 'command':
-                logging.warn('invalid message: %s' % msg)
-                return
+        command = parse_command(msg)
 
         if command == 'get-status-report':
             if not reply_to:
@@ -197,7 +198,7 @@ class JobManager(object):
                 return
             try:
                 headers = populate_headers(reply_to, JSON_MESSAGE)
-                self.self_to(reply_to, headers=headers, body='{"map":{"entry":{"string":["json","ok"]}}}')
+                self.send_to(reply_to, headers=headers, body='{"map":{"entry":{"string":["json","ok"]}}}')
             except Exception as e:
                 logging.warn("get status report failed: %s" % e)
         elif command == 'purge-old-jobs':
@@ -426,7 +427,16 @@ class JobManager(object):
 
 def generate_load(client, session_id):
     job_id = uuid.uuid4().hex
-    headers = {u'username': u'chipster', u'session-id': session_id,            u'destination': TOPICS['client_topic'], u'timestamp':            u'1417607038606', u'expires': u'0', u'persistent': u'true',            u'class': u'fi.csc.microarray.messaging.message.JobMessage',            u'priority': u'4', u'multiplex-channel': u'null', u'reply-to':            TOPICS['jobmanager_topic'], u'message-id': '%s' % uuid.uuid4().hex, u'transformation': u'jms-map-json', u'reply-to': '/remote-temp-topic/ID:tldr-35781-1420456675692-3:1:8'}
+    headers = {u'username': u'chipster', u'session-id': session_id,
+               u'destination': TOPICS['client_topic'],
+               u'timestamp': u'1417607038606', u'expires': u'0',
+               u'persistent': u'true',
+               u'class': u'fi.csc.microarray.messaging.message.JobMessage',
+               u'priority': u'4', u'multiplex-channel': u'null',
+               u'reply-to': TOPICS['jobmanager_topic'],
+               u'message-id': '%s' % uuid.uuid4().hex,
+               u'transformation': u'jms-map-json',
+               u'reply-to': '/remote-temp-topic/ID:tldr-35781-1420456675692-3:1:8'}
     body = {"map": {"entry": [
         {"string": ["payload_input", "0f847d18-4d3b-4a0d-8c72-665f67699cf7"]},
         {"string": ["analysisID", "test-data-in.R"]},
