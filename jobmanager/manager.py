@@ -5,6 +5,8 @@ import uuid
 import logging
 import socket
 import datetime
+import sys
+import traceback
 
 from logging import FileHandler
 from contextlib import contextmanager
@@ -19,7 +21,7 @@ from stompest.async.listener import (SubscriptionListener, ErrorListener,
 from stompest.sync import Stomp as StompSync
 from jobmanager.models import (Base, JobNotFound,
                                add_job, get_job, get_jobs, get_next_from_queue, update_job_comp,
-                               update_job_results, update_job_running,
+                               update_job_results, update_job_running, update_job_waiting,
                                update_job_rescheduled, update_job_reply_to,
                                update_job_cancelled, purge_completed_jobs)
 from jobmanager.utils import (parse_msg_body, msg_type_from_headers,
@@ -78,6 +80,14 @@ def parse_command(msg):
             if check != 'command':
                 raise ValueError('invalid message: %s' % msg)
         return command
+
+
+def parse_replyto(frame):
+    try:
+        topic_name = frame.headers['reply-to'].split('/')[-1]
+        return '/remote-temp-topic/%s' % topic_name
+    except Exception:
+        return None
 
 
 class JobManager(object):
@@ -177,12 +187,7 @@ class JobManager(object):
             self.handle_admin_cmd_msg(frame)
 
     def handle_admin_cmd_msg(self, frame):
-        reply_to = None
-        try:
-            topic_name = frame.headers['reply-to'].split('/')[-1]
-            reply_to = '/remote-temp-topic/%s' % topic_name
-        except Exception as e:
-            pass
+        reply_to = parse_replyto(frame)
 
         try:
             frame_body = json.loads(frame.body)
@@ -192,32 +197,18 @@ class JobManager(object):
 
         command = parse_command(msg)
 
-        if command == 'get-status-report':
-            if not reply_to:
-                logging.warn("get status report failed: no valid reply_to topic in request")
-                return
-            try:
-                headers = populate_headers(reply_to, JSON_MESSAGE)
-                self.send_to(reply_to, headers=headers, body='{"map":{"entry":{"string":["json","ok"]}}}')
-            except Exception as e:
-                logging.warn("get status report failed: %s" % e)
-        elif command == 'purge-old-jobs':
-            try:
+        if command in ('get-status-report', 'get-running-jobs') and not reply_to:
+            logging.warn("get status report failed: no valid reply_to topic in request")
+            return
 
-                self.purge_old_jobs()
-            except Exception as e:
-                logging.warn("purge old jobs failed: %s" % e)
+        headers = populate_headers(reply_to, JSON_MESSAGE)
+        if command == 'get-status-report':
+            self.send_to(reply_to, headers=headers, body='{"map":{"entry":{"string":["json","ok"]}}}')
+        elif command == 'purge-old-jobs':
+            self.purge_old_jobs()
         elif command == 'get-running-jobs':
-            if not reply_to:
-                logging.warn("get running jobs failed: no valid reply_to topic in request")
-                return
-            try:
-                headers = populate_headers(reply_to, JSON_MESSAGE)
-                with self.session_scope() as session:
-                    self.send_to(reply_to, headers=headers,
-                                 body=populate_joblog_body(get_jobs(session)))
-            except Exception as e:
-                logging.warn("get running jobs failed: %s" % e)
+            with self.session_scope() as session:
+                self.send_to(reply_to, headers=headers, body=populate_joblog_body(get_jobs(session)))
         elif command == 'cancel':
             try:
                 job_id = parse_msg_body(frame_body).get('job-id')
@@ -243,11 +234,12 @@ class JobManager(object):
                 self.submit_next_from_queue()
 
             elif exit_state == 'RUNNING':
-                logging.info("heartbeat for job %s" % job_id)
                 job = update_job_running(session, job_id)
 
-        logging.info("job %s in state %s sending results to %s" %
-                     (job_id, exit_state, job.reply_to))
+            elif exit_state == 'COMP_BUSY':
+                job = update_job_waiting(session, job_id)
+            else:
+                logging.info("job %s in state %s sending results to %s" % (job_id, exit_state, job.reply_to))
         self.send_to(job.reply_to, frame.headers, frame.body)
 
     def handle_joblog_msg(self, frame, body):
@@ -358,7 +350,7 @@ class JobManager(object):
             else:
                 headers = json.loads(job.headers)
                 self.send_to(TOPICS['comp_topic'], headers, job.description, reply_to=TOPICS['jobmanager_topic'])
-                update_job_rescheduled(session, job_id)
+                update_job_rescheduled(session, job_id, skip_retry_counter=job.explicit_wait)
 
     def cancel_job(self, job_id, session_id):
         headers = populate_headers(TOPICS['comp_topic'], CMD_MESSAGE,
@@ -369,11 +361,15 @@ class JobManager(object):
                 update_job_cancelled(session, job_id)
             except JobNotFound:
                 logging.warn("trying to cancel a non-existing job")
+
         self.send_to(TOPICS['comp_topic'], headers, body)
 
     def purge_old_jobs(self):
-        with self.session_scope() as session:
-            purge_completed_jobs(session)
+        try:
+            with self.session_scope() as session:
+                purge_completed_jobs(session)
+        except Exception as e:
+            logging.warn("purge old jobs failed: %s" % e)
 
     def run_periodic_checks(self):
         if self.client:
@@ -402,9 +398,10 @@ class JobManager(object):
                         self.reschedule_job(job.job_id)
                 elif job.created and not job.submitted:
                     if (now - job.created).total_seconds() > JOB_DEAD_AFTER:
-                        logging.warn("Job %s is not scheduled and is now "
-                                     "expired, rescheduling" % job.job_id)
-                        self.reschedule_job(job.job_id)
+                        if not job.explicit_wait or (now - job.explicit_wait).total_seconds() > JOB_DEAD_AFTER:
+                            logging.warn("Job %s is not scheduled and is now "
+                                         "expired, rescheduling" % job.job_id)
+                            self.reschedule_job(job.job_id)
 
     def submit_next_from_queue(self):
         with self.session_scope() as session:
@@ -414,13 +411,13 @@ class JobManager(object):
 
     @contextmanager
     def session_scope(self):
-        session = self.sessionmaker()
+        session = self.sessionmaker(autoflush=False)
         try:
             yield session
             session.commit()
         except:
             session.rollback()
-            raise
+            traceback.print_exc(file=sys.stdout)
         finally:
             session.expunge_all()
             session.close()

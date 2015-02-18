@@ -23,7 +23,7 @@ class TestDB(object):
         self.session = sessionmaker(bind=engine)()
 
     def test_add_new_job(self):
-        add_job(self.session, "abc42", "Analysis Job", "{}", "session_id")
+        add_job(self.session, "abc42", "Analysis Job", "{}", "session_id", "username")
         jobs = [x for x in get_jobs(self.session)]
         assert len(jobs) == 1
         job = jobs[0]
@@ -33,21 +33,21 @@ class TestDB(object):
         assert job.session_id == 'session_id'
 
     def test_add_multiple_jobs(self):
-        add_job(self.session, "abc42", "analysis job", "{}", "session_id")
+        add_job(self.session, "abc42", "analysis job", "{}", "session_id", "username")
         jobs = [x for x in get_jobs(self.session)]
         assert len(jobs) == 1
-        add_job(self.session, "abc43", "analysis Job ", "{}", "session_id")
+        add_job(self.session, "abc43", "analysis Job ", "{}", "session_id", "username")
         jobs = [x for x in get_jobs(self.session)]
         assert len(jobs) == 2
 
     def test_get_next_unsubmitted(self):
-        add_job(self.session, "abc42", "analysis job", "{}", "session_id")
+        add_job(self.session, "abc42", "analysis job", "{}", "session_id", "username")
         jobs = [x for x in get_jobs(self.session)]
         assert len(jobs) == 1
-        add_job(self.session, "abc43", "analysis Job ", "{}", "session_id")
+        add_job(self.session, "abc43", "analysis Job ", "{}", "session_id", "username")
         jobs = [x for x in get_jobs(self.session)]
         assert len(jobs) == 2
-        add_job(self.session, "abc44", "analysis Job ", "{}", "session_id")
+        add_job(self.session, "abc44", "analysis Job ", "{}", "session_id", "username")
         jobs = [x for x in get_jobs(self.session)]
         assert len(jobs) == 3
         update_job_comp(self.session, "abc42", "analysis_server_1")
@@ -55,7 +55,7 @@ class TestDB(object):
         assert job.job_id == "abc43"
 
     def test_submit_job_to_comp(self):
-        add_job(self.session, "abc42", "analysis job", "{}", "session_id")
+        add_job(self.session, "abc42", "analysis job", "{}", "session_id", "username")
         update_job_comp(self.session, "abc42", "analysis_server_1")
         jobs = [x for x in get_jobs(self.session)]
         assert len(jobs) == 1
@@ -64,8 +64,8 @@ class TestDB(object):
         assert job.comp_id == 'analysis_server_1'
 
     def test_get_all_jobs(self):
-        add_job(self.session, "abc42", "analysis job", "{}", "session_id")
-        add_job(self.session, "abc43", "analysis job", "{}", "session_id")
+        add_job(self.session, "abc42", "analysis job", "{}", "session_id", "username")
+        add_job(self.session, "abc43", "analysis job", "{}", "session_id", "username")
         update_job_comp(self.session, "abc43", "analysis_server_1")
         update_job_results(self.session, "abc43", "results", 'COMPLETED')
         jobs_active = [x for x in get_jobs(self.session)]
@@ -86,7 +86,7 @@ class TestDB(object):
             update_job_reply_to(self.session, "abc42", "someaddr")
 
     def test_job_update(self):
-        add_job(self.session, "abc42", "analysis job", "{}", "session_id")
+        add_job(self.session, "abc42", "analysis job", "{}", "session_id", "username")
         assert not get_job(self.session, "abc42").seen
         update_job_running(self.session, "abc42")
         assert get_job(self.session, "abc42")
@@ -96,7 +96,7 @@ class TestDB(object):
             update_job_running(self.session, "abc42")
 
     def test_job_presentation(self):
-        add_job(self.session, "abc42", "analysis job", "{}", "session_id")
+        add_job(self.session, "abc42", "analysis job", "{}", "session_id", "username")
         job_str = get_job(self.session, "abc42")
         assert "%s" % job_str == "<Job:abc42>"
 
@@ -105,20 +105,20 @@ class TestDB(object):
             update_job_rescheduled(self.session, "abc42")
 
     def test_reschedule_finished_job(self):
-        add_job(self.session, "abc42", "analysis job", "{}", "session_id")
+        add_job(self.session, "abc42", "analysis job", "{}", "session_id", "username")
         update_job_results(self.session, "abc42", "results", "COMPLETED")
         with pytest.raises(RuntimeError):
             update_job_rescheduled(self.session, "abc42")
 
     def test_reschedule_job(self):
-        add_job(self.session, "abc42", "analysis job", "{}", "session_id")
+        add_job(self.session, "abc42", "analysis job", "{}", "session_id", "username")
         job = get_job(self.session, "abc42")
         assert job.retries == 0
         update_job_rescheduled(self.session, "abc42")
         assert job.retries == 1
 
     def test_cancel_job(self):
-        add_job(self.session, "abc42", "analysis job", "{}", "session_id")
+        add_job(self.session, "abc42", "analysis job", "{}", "session_id", "username")
         update_job_cancelled(self.session, "abc42")
         job = get_job(self.session, "abc42")
         assert job.finished
@@ -129,13 +129,13 @@ class TestDB(object):
             update_job_cancelled(self.session, "abc42")
 
     def test_cancel_completed(self):
-        add_job(self.session, "abc42", "analysis job", "{}", "session_id")
+        add_job(self.session, "abc42", "analysis job", "{}", "session_id", "username")
         update_job_results(self.session, "abc42", "results", "CANCELLED")
         with pytest.raises(RuntimeError):
             update_job_cancelled(self.session, "abc42")
 
     def test_purge_completed(self):
-        add_job(self.session, "abc42", "analysis job", "{}", "session_id")
+        add_job(self.session, "abc42", "analysis job", "{}", "session_id", "username")
         jobs = [x for x in get_jobs(self.session)]
         assert len(jobs) == 1
         job = get_job(self.session, "abc42")
@@ -160,7 +160,7 @@ class TestDB(object):
              '"priority": "4", "multiplex-channel": "null", "message-id":'
              '"8a96be12f61641b998fd57939e38bf98", "transformation":'
              '"jms-map-json"}'),
-            "session_id")
+            "session_id", "username")
         update_job_results(self.session,
             'daeadeb7-31c0-4279-a784-79bb5e35f73c',
             ('{"map":{"entry":[{"string":"errorMessage","null":""},'

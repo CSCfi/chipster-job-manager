@@ -3,6 +3,7 @@ import datetime
 import logging
 from sqlalchemy import (Column, Integer, String, Text,
                         DateTime)
+from sqlalchemy import desc
 from sqlalchemy.ext.declarative import declarative_base
 
 from jobmanager.utils import parse_description
@@ -39,6 +40,8 @@ class Job(Base):
     seen = Column(DateTime)
     retries = Column(Integer, default=0)
     comp_id = Column(String(length=40))
+    explicit_wait = Column(DateTime)
+    dequeued = Column(DateTime)
 
     def to_dict(self):
         d = {}
@@ -76,29 +79,33 @@ def get_jobs(session, include_finished=False):
     if include_finished:
         return session.query(Job).all()
     else:
-        return session.query(Job).filter_by(finished=None)
+        return session.query(Job).filter(Job.finished == None)
 
 
 def get_job(session, job_id):
-    job = session.query(Job).filter_by(job_id=job_id).first()
+    job = session.query(Job).filter(Job.job_id == job_id).first()
     if not job:
         raise JobNotFound(job_id)
     return job
 
 
 def get_next_from_queue(session):
-    return session.query(Job).filter_by(submitted=None).order_by(Job.id).first()
+    job = session.query(Job).filter(Job.submitted == None).order_by(desc(Job.dequeued)).first()
+    if job:
+        job.dequeued = datetime.datetime.utcnow()
+    return job
 
 
 def add_job(session, job_id, description, headers, session_id, username, reply_to=None):
     desc = {}
+    parsed_description = parse_description(description)
     desc['job_id'] = job_id
     desc['description'] = description
-    parsed_description = parse_description(description)
     desc['analysis_id'] = parsed_description.get('analysisID')
     desc['created'] = datetime.datetime.utcnow()
     desc['headers'] = headers
     desc['state'] = 'NEW'
+    desc['explicit_wait'] = None
     desc['username'] = username
     desc['reply_to'] = reply_to
     desc['session_id'] = session_id
@@ -115,6 +122,7 @@ def update_job_comp(session, job_id, comp_id):
         raise ValueError('cannot modify finished job: %s' % job_id)
     job.submitted = datetime.datetime.utcnow()
     job.state = 'SUBMITTED'
+    job.explicit_wait = None
     job.comp_id = comp_id
     session.merge(job)
     return job
@@ -136,6 +144,7 @@ def update_job_results(session, job_id, results, exit_state):
 
     if not job.comp_id:
         logging.warn('addings results to job %s with no comp_id' % job_id)
+
     job.finished = datetime.datetime.utcnow()
     job.state = exit_state
     job.results = results.decode("utf8")
@@ -147,13 +156,28 @@ def update_job_running(session, job_id):
     job = session.query(Job).filter(Job.job_id == job_id).first()
     if not job:
         raise JobNotFound(job_id)
+    if job.finished:
+        raise RuntimeError("cannot put a finished job to running state")
     job.seen = datetime.datetime.utcnow()
     job.state = 'RUNNING'
     session.merge(job)
     return job
 
 
-def update_job_rescheduled(session, job_id):
+def update_job_waiting(session, job_id):
+    job = session.query(Job).filter(Job.job_id == job_id).first()
+    if not job:
+        raise JobNotFound(job_id)
+    if job.finished:
+        raise RuntimeError("cannot put a finished job to wait")
+    if job.submitted:
+        return
+    job.state = 'WAITING'
+    job.explicit_wait = datetime.datetime.utcnow()
+    return job
+
+
+def update_job_rescheduled(session, job_id, skip_retry_counter=None):
     job = session.query(Job).filter(Job.job_id == job_id).first()
     if not job:
         raise JobNotFound(job_id)
@@ -161,8 +185,10 @@ def update_job_rescheduled(session, job_id):
         raise RuntimeError("cannot reschedule finished job")
     now = datetime.datetime.utcnow()
     job.rescheduled = now
-    job.submitted = now
-    job.retries = job.retries + 1
+    job.submitted = None
+    job.comp_id = None
+    if not skip_retry_counter:
+        job.retries = job.retries + 1
     job.state = 'RESCHEDULED'
     job.seen = None
     session.merge(job)
