@@ -28,8 +28,6 @@
         </ul>
       </header>
       <section>
-        <h1></h1>
-
 <h1>
 <a id="chipster-jobmanager" class="anchor" href="#chipster-jobmanager" aria-hidden="true"><span class="octicon octicon-link"></span></a>Chipster JobManager</h1>
 
@@ -46,21 +44,64 @@ changed so that JobManager sits in between the client and analysis servers. </p>
 <p>The JobManager uses Stomp, so following entry must be added to
 <code>transportConnectors</code> section in <code>chipster/activemq/conf/activemq.xml</code>:</p>
 
-<pre><code>``&lt;transportConnector name="stomp" uri="stomp://&lt;server_ip&gt;:61613"/&gt;``
-</code></pre>
+<p>
+<code>
+&lt;transportConnector name="stomp" uri="stomp://&lt;server_ip&gt;:61613"/&gt;
+</code>
+</p>
 
-<p>The port number 61613 is the default for stomp protocol.</p>
+<p>The port number 61613 is the default for stomp protocol. Currently Stomp+SSL transport <a href="https://github.com/nikipore/stompest/issues/3">is not supported</a>.</p>
 
-<p>To learn more about Chipster refer to:</p>
+<p>To learn more about Chipster refer to: <a href="http://chipster.csc.fi/">http://chipster.csc.fi</a>
+</p>
 
-<pre><code>http://chipster.csc.fi/
-</code></pre>
+<h1><a id="developing" class="anchor" href="#developing" aria-hidden="true"><span class="octicon octicon-link"></span></a>Developing</h1>
+<p>
+JobManager manages Job objects, which each represent one job/task submitted by an user to Chipster platform.
+JobManager receives authenticated requests from Chipster's authenticator component. Job submissions, state handling and results are communicated with the computing component of the Chipster platform.
+Finally the outcome of the computation is reported directly to user's client software.
+</p>
 
-<h1></h1>
+<h2>Data model for Jobs</h2>
+<h3>DB Schema</h3>
+<dl>
+    <dt>id</dt><dd>Column(Integer, primary_key=True)</dd>
+    <dt>job_id</dt><dd>Column(String(length=40))</dd>
+    <dt>session_id</dt><dd>Column(String(length=40))</dd>
+    <dt>description</dt><dd>Column(Text)</dd>
+    <dt>headers</dt><dd>Column(Text), <span>message headers in job submission request</span></dd>
+    <dt>results</dt><dd>Column(Text), <span>message body of job results</span></dd>
+    <dt>analysis_id</dt><dd>Column(Text)</dd>
+    <dt>reply_to</dt><dd>Column(String(length=255)), topic reported by client where the results are to be sent</dd>
+    <dt>state</dt><dd>Column(String(length=32)), Job state, see job <a href="#states">states</a></dd>
+    <dt>created</dt><dd>Column(DateTime), timestamp when job was received from client</dd>
+    <dt>rescheduled</dt><dd>Column(DateTime), timestamp if job was rescheduled</dd>
+    <dt>submitted</dt><dd>Column(DateTime), timestamp when job was submitted to computing component</dd>
+    <dt>username</dt><dd>Column(String(255))</dd>
+    <dt>finished</dt><dd>Column(DateTime), timestamp when job was finished</dd>
+    <dt>seen</dt><dd>Column(DateTime), timestamp of last moment when job was seen running on computing component</dd>
+    <dt>retries</dt><dd>Column(Integer, default=0), number of retries used to execute the job</dd>
+    <dt>comp_id</dt><dd>Column(String(length=40)), id of the computing component the job is running on currently</dd>
+    <dt>explicit_wait</dt><dd>Column(DateTime), timestamp of the moment when computing component told job to wait in queue because no slots were free</dd>
+    <dt>dequeued</dt><dd>Column(DateTime), timestamp when this job was in waiting state and was last time dequeued. See job <a href="#queueing">queueing</a>.</dd>
+</dl>
 
-<h1>
-<a id="developing" class="anchor" href="#developing" aria-hidden="true"><span class="octicon octicon-link"></span></a>Developing</h1>
+<h3>Job State</h3>
+<a name="states">
+<img src="img/task_states.png" alt="Job Manager task states, img/task_states.dot for textual representation"/>
+</a>
 
+<h3>Job Queueing</h3>
+<a name="queueing"></a>
+If a received job is acked by a computing component telling the it is currently busy the job will be queued. This way the job will not timeout, and the job resubmission will be tried once 
+<ul>
+<li>the job timer triggers: JobManager uses internal polling loop which goes through all active jobs (i.e. jobs which are not cancelled, completed, failed, or errored) and checks
+    if job resubmission should be tried.
+<li>When a running job completes, JobManager dequeues another job to execution. This prevents the need to wait for timer to trigger. Dequeued job might not be to proceed to execution in case the tool it requires is not available on the available host.
+Dequeued field of the job is updated everytime a job is queued, and the job with latest dequeued timestamp is dequeued.</li>
+</ul>
+
+<h2>Tests</h2>
 <p>Run tests (requires tox)
     <code>tox .</code></p>
 
