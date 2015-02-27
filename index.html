@@ -38,8 +38,23 @@ session state locally and disconnect. Job is then executed on Chipster analysis
 servers and managed by the JobManager, which saves the results upon completion
 and reschedules the job in case the execution fails.</p>
 
+<h2>Deploying</h2>
+
+<p>
+To use JobManager, we need to:
+  <ul>
+    <li><a href="#activemq">update ActiveMQ configuration</a></li>
+    <li><a href="#pip">install the Chipster Job Manager</a></li>
+    <li><a href="#config">create configuration</a></li>
+    <li><a href="#supervisor">setup runtime environment with Supervisord</a></li>
+  </ul>
+</p>
+
+<a name="activemq"></a>
+<h3>Update ActiveMQ configuration</h3>
+
 <p>To use JobManager with Chipster the message routing configuration must be
-changed so that JobManager sits in between the client and analysis servers. </p>
+changed so that JobManager sits in between the client and analysis servers.</p>
 
 <p>The JobManager uses Stomp, so following entry must be added to
 <code>transportConnectors</code> section in <code>chipster/activemq/conf/activemq.xml</code>:</p>
@@ -51,6 +66,70 @@ changed so that JobManager sits in between the client and analysis servers. </p>
 </p>
 
 <p>The port number 61613 is the default for stomp protocol. Currently Stomp+SSL transport <a href="https://github.com/nikipore/stompest/issues/3">is not supported</a>.</p>
+
+<p>
+Following entry must be added to simpleAuthenticationPlugin.user (change password value):
+</p>
+<p>
+<code>
+    &lt;authenticationUser groups="jobmanagers,all" password="changeMe" username="jobmanager"/&gt;
+</code>
+</p>
+
+<p>
+and following entries must be changed / added in authorizationPlugin.map.authorizationMap.authorizationEntries:
+</p>
+
+<p>
+<code>
+    &lt;authorizationEntry admin="all" read="analysers,jobmanagers" topic="comp-admin-topic" write="managers,jobmanagers"/&gt;<br />
+    &lt;authorizationEntry admin="all" read="jobmanagers" topic="jobmanager-admin-topic" write="managers"/&gt;<br />
+    &lt;authorizationEntry admin="all" read="jobmanagers" topic="jobmanager-topic" write="analysers"/&gt;<br />
+    &lt;authorizationEntry admin="all" read="analysers" topic="authorized-managed-request-topic" write="jobmanagers"/&gt;<br />
+    &lt;authorizationEntry admin="all" read="jobmanagers" topic="authorised-request-topic" write="authenticators"/&gt;<br />
+</code>
+</p>
+
+<a name="pip"></a>
+<h3>Install Chipster Job Manager</h3>
+<p>
+While JobManager can be installed just by running Python <code>pip install chipster-job-manager</code> it is encouraged to install the application into a 
+Python <a href="https://virtualenv.pypa.io/en/latest/">virtuelenv</a>. If you decide to use virtualenvs create and activate the environment created for JobManager before running the command above.
+</p>
+
+<a name="config"></a>
+<h3>Configuration</h3>
+Create config file config.yaml
+<p>
+<code>
+debug: True<br />
+database_dialect: "sqlite"<br />
+database_connect_string: "/var/run/db.sqlite"<br />
+stomp_endpoint: "tcp://127.0.0.1:61613?startupMaxReconnectAttempts=100,initialReconnectDelay=5000,maxReconnectDelay=5000,maxReconnectAttempts=100"<br />
+stomp_login: "loginname"<br />
+stomp_password: "password"<br />
+</code>
+</p>
+
+<a name="supervisor"></a>
+<h3>Setup runtime environment with Supervisord</h3>
+
+<p>
+JobManager is supposed to be managed by <a href="http://supervisord.org/">Supervisor</a> process control. To install Supervisor in Ubuntu, run <code>aptitude install supervisor</code>.
+In supervisor.conf add following section:
+</p>
+<p>
+<code>
+[program:jobmanager]
+command = path/to/python -m jobmanager.manager /opt/chipster/jobmanager/config.yaml
+user = chipster
+</code>
+</p>
+
+<p>
+Check your path/to/python in case you are using virtualenvs. Append <code>--logging path/to/file.log</code> in the command in case you want to redirect the output into a log file.
+</p>
+
 
 <p>To learn more about Chipster refer to: <a href="http://chipster.csc.fi/">http://chipster.csc.fi</a>
 </p>
