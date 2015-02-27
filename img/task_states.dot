@@ -1,0 +1,19 @@
+digraph {
+    "NEW" -> "SUBMITTED";
+    "SUBMITTED" -> "RUNNING";
+    "SUBMITTED" -> "WAITING";
+    "WAITING" -> "RUNNING";
+    "WAITING" -> "RESCHEDULED";
+    "RUNNING" -> "RESCHEDULED";
+    "NEW" -> "CANCELLED";
+    "SUBMITTED" -> "CANCELLED";
+    "WAITING" -> "CANCELLED";
+    "RUNNING" -> "CANCELLED";
+    "RESCHEDULED" -> "CANCELLED";
+    "SUBMITTED" -> "FAILED_USER_ERROR";
+    "SUBMITTED" -> "FAILED";
+    "SUBMITTED" -> "ERROR";
+    "RUNNING" -> "COMPLETED";
+    "RUNNING" -> "FAILED";
+    "RUNNING" -> "ERROR";
+}
