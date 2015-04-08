@@ -237,14 +237,23 @@ class JobManager(object):
             exit_state = body.get('exitState')
             if exit_state in ('ERROR', 'COMPLETED', 'FAILED', 'FAILED_USER_ERROR'):
                 logging.info("results ready for job %s (%s)" % (job_id, exit_state))
-                job = update_job_results(session, job_id, frame.body, exit_state)
+                try:
+                    job = update_job_results(session, job_id, frame.body, exit_state)
+                except:
+                    logger.exception('update_job_results failed')
                 self.submit_next_from_queue()
 
             elif exit_state == 'RUNNING':
-                job = update_job_running(session, job_id)
+                try:
+                    job = update_job_running(session, job_id)
+                except:
+                    logger.exception("update_job_running failed")
 
             elif exit_state == 'COMP_BUSY':
-                job = update_job_waiting(session, job_id)
+                try:
+                    job = update_job_waiting(session, job_id)
+                except:
+                    logger.exception("update_job_waiting failed")
             else:
                 logging.info("job %s in state %s sending results to %s" % (job_id, exit_state, job.reply_to))
         self.send_to(job.reply_to, frame.headers, frame.body)
@@ -273,7 +282,10 @@ class JobManager(object):
                 job_id = job.job_id
                 as_id = msg.get('as-id')
                 with self.session_scope() as session:
-                    update_job_comp(session, job_id, as_id)
+                    try:
+                        update_job_comp(session, job_id, as_id)
+                    except:
+                        logger.exception("update_job_comp failed")
                 body = populate_msg_body('choose', as_id, job_id)
                 headers = populate_headers(TOPICS['comp_topic'], CMD_MESSAGE,
                                            session_id=job.session_id,
@@ -357,7 +369,10 @@ class JobManager(object):
             else:
                 headers = json.loads(job.headers)
                 self.send_to(TOPICS['comp_topic'], headers, job.description, reply_to=TOPICS['jobmanager_topic'])
-                update_job_rescheduled(session, job_id, skip_retry_counter=job.explicit_wait)
+                try:
+                    update_job_rescheduled(session, job_id, skip_retry_counter=job.explicit_wait)
+                except:
+                    logger.exception("update_job_rescheduled failed")
 
     def cancel_job(self, job_id, session_id):
         headers = populate_headers(TOPICS['comp_topic'], CMD_MESSAGE,
@@ -396,25 +411,37 @@ class JobManager(object):
                     if (now - job.seen).total_seconds() > JOB_DEAD_AFTER:
                         logger.warning("Job %s seems to be dead (no action for %s seconds), rescheduling job" %
                                        (job.job_id, (now - job.seen).total_seconds()))
-                        self.reschedule_job(job.job_id)
+                        try:
+                            self.reschedule_job(job.job_id)
+                        except:
+                            logger.exception("reschedule_job failed")
                 elif job.submitted and not job.seen:
                     if (now - job.submitted).total_seconds() > JOB_DEAD_AFTER:
                         logger.warning("Job %s is not reported by any analysis "
                                        "server and is not expired, rescheduling "
                                        "job" % job.job_id)
-                        self.reschedule_job(job.job_id)
+                        try:
+                            self.reschedule_job(job.job_id)
+                        except:
+                            logger.exception("reschedule_job failed")
                 elif job.created and not job.submitted:
                     if (now - job.created).total_seconds() > JOB_DEAD_AFTER:
                         if not job.explicit_wait or (now - job.explicit_wait).total_seconds() > JOB_DEAD_AFTER:
                             logger.warning("Job %s is not scheduled and is now "
                                            "expired, rescheduling" % job.job_id)
-                            self.reschedule_job(job.job_id)
+                            try:
+                                self.reschedule_job(job.job_id)
+                            except:
+                                logger.exception("reschedule_job failed")
 
     def submit_next_from_queue(self):
         with self.session_scope() as session:
             job = get_next_from_queue(session)
             if job:
-                self.reschedule_job(job.job_id)
+                try:
+                    self.reschedule_job(job.job_id)
+                except:
+                    logger.exception("reschedule_job failed")
 
     @contextmanager
     def session_scope(self):

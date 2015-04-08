@@ -142,7 +142,6 @@ def update_job_reply_to(session, job_id, reply_to):
 def update_job_results(session, job_id, results, exit_state):
     job = session.query(Job).filter(Job.job_id == job_id).first()
     if not job:
-        logger.warning('')
         raise JobNotFound(job_id)
 
     if not job.comp_id:
