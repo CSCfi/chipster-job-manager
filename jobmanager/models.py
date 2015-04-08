@@ -10,6 +10,8 @@ from jobmanager.utils import parse_description
 
 Base = declarative_base()
 
+logger = logging.getLogger('jobmanager')
+
 
 class JobNotFound(Exception):
     def __init__(self, message):
@@ -140,10 +142,11 @@ def update_job_reply_to(session, job_id, reply_to):
 def update_job_results(session, job_id, results, exit_state):
     job = session.query(Job).filter(Job.job_id == job_id).first()
     if not job:
+        logger.warning('')
         raise JobNotFound(job_id)
 
     if not job.comp_id:
-        logging.warn('addings results to job %s with no comp_id' % job_id)
+        logger.warning('addings results to job %s with no comp_id' % job_id)
 
     job.finished = datetime.datetime.utcnow()
     job.state = exit_state

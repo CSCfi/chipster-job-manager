@@ -46,6 +46,11 @@ TOPICS = {
     'admin_topic': '/topic/admin-topic',
 }
 
+FORMAT = '%(asctime)-15s %(message)s'
+logging.basicConfig(format=FORMAT)
+logger = logging.getLogger('jobmanager')
+logger.setLevel(logging.INFO)
+
 
 class ReplyToResolutionException(Exception):
     pass
@@ -54,11 +59,11 @@ class ReplyToResolutionException(Exception):
 class JobManagerErrorLister(ErrorListener):
     # E.g. trying to send to disconnected client
     def onError(self, connection, frame):
-        logging.warn("JM AMQ Connection Error")
+        logger.warning("JM AMQ Connection Error")
 
     # E.g. AMQ connection problem
     def onConnectionLost(self, connection, reason):
-        logging.warn("JM AMQ Connection Lost")
+        logger.warning("JM AMQ Connection Lost")
         reactor.callFromThread(reactor.stop)
 
 
@@ -75,9 +80,11 @@ def parse_command(msg):
             try:
                 check, command = msg.get('string')
             except:
+                logger.exception("invalid command message")
                 raise ValueError('invalid message: %s' % msg)
 
             if check != 'command':
+                logger.warn("invalid command message")
                 raise ValueError('invalid message: %s' % msg)
         return command
 
@@ -140,7 +147,7 @@ class JobManager(object):
                 self.send_to(TOPICS['comp_topic'], frame.headers, frame.body,
                              reply_to=TOPICS['jobmanager_topic'])
         except Exception as e:
-            logging.warn(e)
+            logger.exception(e)
 
     def process_comp_message(self, client, frame):
         frame_body = json.loads(frame.body)
@@ -158,11 +165,11 @@ class JobManager(object):
         else:
             try:
                 client_topic = self.resolve_reply_to(body)
-                logging.warn("unknown msg: %s" % frame.body)
+                logger.warning("unknown msg: %s" % frame.body)
                 self.send_to(client_topic, headers, json.dumps(frame.body),
                              reply_to=headers.get('reply-to'))
             except ReplyToResolutionException:
-                logging.warn("unable to resolve reply_to address")
+                logger.warning("unable to resolve reply_to address")
 
     def process_admin_message(self, client, frame):
         admin_topic = TOPICS['admin_topic']
@@ -173,8 +180,8 @@ class JobManager(object):
             content = body.get('string')
             if content:
                 msg_type, msg_command = content
-        except Exception as e:
-            logging.warn(e)
+        except Exception:
+            logger.exception("unable to process admin message")
             return
 
         if msg_command == 'ping':
@@ -192,13 +199,13 @@ class JobManager(object):
         try:
             frame_body = json.loads(frame.body)
             msg = parse_msg_body(frame_body)
-        except Exception as e:
-            logging.warn('unable to parse frame body: %s' % e)
+        except Exception:
+            logger.exception('unable to parse frame body')
 
         command = parse_command(msg)
 
         if command in ('get-status-report', 'get-running-jobs') and not reply_to:
-            logging.warn("get status report failed: no valid reply_to topic in request")
+            logger.warning("get status report failed: no valid reply_to topic in request")
             return
 
         headers = populate_headers(reply_to, JSON_MESSAGE)
@@ -221,7 +228,7 @@ class JobManager(object):
                     reply_body = populate_job_result_body(job_id, exit_state='CANCELLED')
                     self.send_to(job.reply_to, headers=headers, body=reply_body)
             except Exception as e:
-                logging.warn("cancel job failed: %s" % e)
+                logger.exception("cancel job failed: %s" % e)
 
     def handle_result_msg(self, frame, body):
         job_id = body.get('jobId')
@@ -305,7 +312,7 @@ class JobManager(object):
                     else:
                         resp_body = populate_job_running_body(job.job_id)
                 except JobNotFound:
-                    logging.info("job %s not found" % job_id)
+                    logger.exception("job %s not found" % job_id)
                     resp_body = populate_job_result_body(job_id, error_msg='job not found')
             self.send_to(client_topic, headers, resp_body)
         elif command == 'cancel':
@@ -320,7 +327,7 @@ class JobManager(object):
         if reply_to:
             headers[u'reply-to'] = reply_to
         if not self.client:
-            logging.warn("unable to send, client not ready")
+            logger.warning("unable to send, client not ready")
             raise Exception("client not ready")
         self.client.send(destination=destination, headers=headers, body=body)
 
@@ -360,7 +367,7 @@ class JobManager(object):
             try:
                 update_job_cancelled(session, job_id)
             except JobNotFound:
-                logging.warn("trying to cancel a non-existing job")
+                logger.exception("trying to cancel a non-existing job")
 
         self.send_to(TOPICS['comp_topic'], headers, body)
 
@@ -369,7 +376,7 @@ class JobManager(object):
             with self.session_scope() as session:
                 purge_completed_jobs(session)
         except Exception as e:
-            logging.warn("purge old jobs failed: %s" % e)
+            logger.exception("purge old jobs failed: %s" % e)
 
     def run_periodic_checks(self):
         if self.client:
@@ -387,20 +394,20 @@ class JobManager(object):
             for job in get_jobs(session):
                 if job.submitted and job.seen:
                     if (now - job.seen).total_seconds() > JOB_DEAD_AFTER:
-                        logging.warn("Job %s seems to be dead (no action for %s seconds), rescheduling job" %
-                                     (job.job_id, (now - job.seen).total_seconds()))
+                        logger.warning("Job %s seems to be dead (no action for %s seconds), rescheduling job" %
+                                       (job.job_id, (now - job.seen).total_seconds()))
                         self.reschedule_job(job.job_id)
                 elif job.submitted and not job.seen:
                     if (now - job.submitted).total_seconds() > JOB_DEAD_AFTER:
-                        logging.warn("Job %s is not reported by any analysis "
-                                     "server and is not expired, rescheduling "
-                                     "job" % job.job_id)
+                        logger.warning("Job %s is not reported by any analysis "
+                                       "server and is not expired, rescheduling "
+                                       "job" % job.job_id)
                         self.reschedule_job(job.job_id)
                 elif job.created and not job.submitted:
                     if (now - job.created).total_seconds() > JOB_DEAD_AFTER:
                         if not job.explicit_wait or (now - job.explicit_wait).total_seconds() > JOB_DEAD_AFTER:
-                            logging.warn("Job %s is not scheduled and is now "
-                                         "expired, rescheduling" % job.job_id)
+                            logger.warning("Job %s is not scheduled and is now "
+                                           "expired, rescheduling" % job.job_id)
                             self.reschedule_job(job.job_id)
 
     def submit_next_from_queue(self):
@@ -415,8 +422,9 @@ class JobManager(object):
         try:
             yield session
             session.commit()
-        except:
+        except Exception:
             session.rollback()
+            logger.exception("unable to commit, session rollback")
             traceback.print_exc(file=sys.stdout)
         finally:
             session.expunge_all()
@@ -443,9 +451,6 @@ def generate_load(client, session_id):
 
 
 def main():
-    logging.basicConfig(format='%(asctime)s %(message)s')
-    logging.getLogger().setLevel(logging.INFO)
-
     parser = argparse.ArgumentParser()
     parser.add_argument('config_file')
     parser.add_argument('--debug', action='store_true')
@@ -457,10 +462,13 @@ def main():
     args = parser.parse_args()
 
     if args.logfile:
-        logging.getLogger().addHandler(FileHandler(args.logfile))
+        fh = FileHandler(args.logfile)
+        formatter = logging.Formatter(FORMAT)
+        fh.setFormatter(formatter)
+        logger.addHandler(fh)
 
     if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
+        logger.setLevel(logging.DEBUG)
 
     config = yaml.load(open(args.config_file))
     sessionmaker = config_to_db_session(config, Base)
