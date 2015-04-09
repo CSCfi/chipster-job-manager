@@ -4,7 +4,7 @@ setup(
     name="Chipster Job Manager",
     version='3.0',
     description='Manages long running jobs on Chipster platform',
-    license='MIT'
+    license='MIT',
     author='Harri Hämäläinen',
     author_email='harri.hamalainen@csc.fi',
     packages=['jobmanager'],
