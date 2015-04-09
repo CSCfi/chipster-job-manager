@@ -9,7 +9,6 @@ session state locally and disconnect. Job is then executed on Chipster analysis
 servers and managed by the JobManager, which saves the results upon completion
 and reschedules the job in case the execution fails.
 
-
 Documentation:
 
     http://csc-it-center-for-science.github.io/chipster-job-manager/
