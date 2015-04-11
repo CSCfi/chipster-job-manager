@@ -269,13 +269,12 @@ class JobManager(object):
         if command == 'offer':
             with self.session_scope() as session:
                 job = get_job(session, job_id)
-            now = datetime.datetime.utcnow()
             schedule_job = False
             if not job.submitted:  # New job, never submitted before
                 schedule_job = True
-            elif (now - job.created).total_seconds() > JOB_DEAD_AFTER and not job.seen:  # Job has never reported by any analysis server
+            elif job.seconds_since_created() > JOB_DEAD_AFTER and not job.seen:  # Job has never reported by any analysis server
                 schedule_job = True
-            elif (now - job.seen).total_seconds() > JOB_DEAD_AFTER:  # The job has not recently been reported by any analysis server
+            elif job.seconds_since_last_seen() > JOB_DEAD_AFTER:  # The job has not recently been reported by any analysis server
                 schedule_job = True
 
             if schedule_job:
@@ -404,19 +403,18 @@ class JobManager(object):
             self.check_stalled_jobs()
 
     def check_stalled_jobs(self):
-        now = datetime.datetime.utcnow()
         with self.session_scope() as session:
             for job in get_jobs(session):
                 if job.submitted and job.seen:
-                    if (now - job.seen).total_seconds() > JOB_DEAD_AFTER:
+                    if job.seconds_since_last_seen() > JOB_DEAD_AFTER:
                         logger.warning("Job %s seems to be dead (no action for %s seconds), rescheduling job" %
-                                       (job.job_id, (now - job.seen).total_seconds()))
+                                       (job.job_id, job.seconds_since_last_seen()))
                         try:
                             self.reschedule_job(job.job_id)
                         except:
                             logger.exception("reschedule_job failed")
                 elif job.submitted and not job.seen:
-                    if (now - job.submitted).total_seconds() > JOB_DEAD_AFTER:
+                    if job.seconds_since_submitted() > JOB_DEAD_AFTER:
                         logger.warning("Job %s is not reported by any analysis "
                                        "server and is not expired, rescheduling "
                                        "job" % job.job_id)
@@ -425,8 +423,8 @@ class JobManager(object):
                         except:
                             logger.exception("reschedule_job failed")
                 elif job.created and not job.submitted:
-                    if (now - job.created).total_seconds() > JOB_DEAD_AFTER:
-                        if not job.explicit_wait or (now - job.explicit_wait).total_seconds() > JOB_DEAD_AFTER:
+                    if job.seconds_since_created() > JOB_DEAD_AFTER:
+                        if not job.explicit_wait or job.seconds_since_explicit_wait() > JOB_DEAD_AFTER:
                             logger.warning("Job %s is not scheduled and is now "
                                            "expired, rescheduling" % job.job_id)
                             try:

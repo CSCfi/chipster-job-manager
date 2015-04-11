@@ -70,6 +70,25 @@ class Job(Base):
                             pass
         return d
 
+    @classmethod
+    def seconds_since(ts):
+        if not ts:
+            return None
+        td = datetime.datetime.now() - ts
+        return (td.microseconds + (td.seconds + td.days * 24 * 3600) * 10 ** 6) / 10 ** 6
+
+    def seconds_since_created(self):
+        return self.seconds_since(self.created)
+
+    def seconds_since_last_seen(self):
+        return self.seconds_since(self.seen)
+
+    def seconds_since_submitted(self):
+        return self.seconds_since(self.submitted)
+
+    def seconds_since_explicit_wait(self):
+        return self.seconds_since(self.explicit_wait)
+
     def __unicode__(self):
         return '<Job:%s>' % self.job_id
 
