@@ -40,6 +40,14 @@ class TestDB(object):
         jobs = [x for x in get_jobs(self.session)]
         assert len(jobs) == 2
 
+    def test_since_function(self):
+        add_job(self.session, "abc42", "Analysis Job", "{}", "session_id", "username")
+        for job in get_jobs(self.session):
+            assert job.seconds_since_created() >= 0
+            assert job.description == 'Analysis Job'
+            assert job.headers == '{}'
+            assert job.session_id == 'session_id'
+
     def test_get_next_unsubmitted(self):
         add_job(self.session, "abc42", "analysis job", "{}", "session_id", "username")
         jobs = [x for x in get_jobs(self.session)]
@@ -144,15 +152,16 @@ class TestDB(object):
         job.finished = datetime.datetime.now() - datetime.timedelta(10000)
         self.session.merge(job)
         purge_completed_jobs(self.session)
-        jobs =  [x for x in get_jobs(self.session)]
+        jobs = [x for x in get_jobs(self.session)]
         assert len(jobs) == 0
 
     def test_dict_representation(self):
-        add_job(self.session,
+        add_job(
+            self.session,
             "daeadeb7-31c0-4279-a784-79bb5e35f73c",
             ('{"map":{"entry":[{"string":["analysisID","SortGtf.java"]},'
-            '{"string":["payload_unsorted.gtf","adf2c6af-fdf2-44e5-b4ad-0c3602653228"]},'
-            '{"string":["jobID","daeadeb7-31c0-4279-a784-79bb5e35f73c"]}]}}'),
+             '{"string":["payload_unsorted.gtf","adf2c6af-fdf2-44e5-b4ad-0c3602653228"]},'
+             '{"string":["jobID","daeadeb7-31c0-4279-a784-79bb5e35f73c"]}]}}'),
             ('{"username": "test", "timestamp": "1417607038606", "expires":'
              '"0", "reply-to": "/topic/foo", "class": '
              '"fi.csc.microarray.messaging.message.JobMessage", "session-id":'
@@ -161,14 +170,15 @@ class TestDB(object):
              '"8a96be12f61641b998fd57939e38bf98", "transformation":'
              '"jms-map-json"}'),
             "session_id", "username")
-        update_job_results(self.session,
+        update_job_results(
+            self.session,
             'daeadeb7-31c0-4279-a784-79bb5e35f73c',
             ('{"map":{"entry":[{"string":"errorMessage","null":""},'
-            '{"string":["sourceCode","chipster"]},{"string":["outputText","x"]},'
-            '{"string":["jobId","daeadeb7-31c0-4279-a784-79bb5e35f73c"]},'
-            '{"string":"heartbeat","boolean":false},'
-            '{"string":["payload_data-input-test.txt","b80b9f0a-9195-4447-a30d-403762d065ac"]},'
-            '{"string":["stateDetail",""]},{"string":["exitState","COMPLETED"]}]}}'),
+             '{"string":["sourceCode","chipster"]},{"string":["outputText","x"]},'
+             '{"string":["jobId","daeadeb7-31c0-4279-a784-79bb5e35f73c"]},'
+             '{"string":"heartbeat","boolean":false},'
+             '{"string":["payload_data-input-test.txt","b80b9f0a-9195-4447-a30d-403762d065ac"]},'
+             '{"string":["stateDetail",""]},{"string":["exitState","COMPLETED"]}]}}'),
             'COMPLETED')
         job = get_job(self.session, 'daeadeb7-31c0-4279-a784-79bb5e35f73c')
         d = job.to_dict()
