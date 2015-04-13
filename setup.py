@@ -1,5 +1,5 @@
 # coding=utf-8
-from distutils.core import setup
+from setuptools import setup
 setup(
     name="chipster-job-manager",
     version='3.1.6',
@@ -8,6 +8,14 @@ setup(
     author='Harri Hämäläinen',
     author_email='harri.hamalainen@csc.fi',
     packages=['jobmanager'],
+    install_requires=[
+        'flask',
+        'stompest',
+        'PyYAML',
+        'stompest.async',
+        'Twisted',
+        'sqlalchemy',
+    ],
     classifiers=[
         'Development Status :: 4 - Beta',
         'Environment :: Console',
