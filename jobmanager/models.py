@@ -70,8 +70,7 @@ class Job(Base):
                             pass
         return d
 
-    @classmethod
-    def seconds_since(ts):
+    def seconds_since(self, ts):
         if not ts:
             return None
         td = datetime.datetime.now() - ts
