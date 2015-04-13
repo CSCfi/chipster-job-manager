@@ -2,7 +2,7 @@
 from distutils.core import setup
 setup(
     name="chipster-job-manager",
-    version='3.1.4',
+    version='3.1.5',
     description='Manages long running jobs on Chipster platform',
     license='MIT',
     author='Harri Hämäläinen',
