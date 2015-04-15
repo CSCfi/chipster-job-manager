@@ -139,9 +139,9 @@ class TestDB(object):
         jobs = [x for x in get_jobs(self.session)]
         assert len(jobs) == 1
         job = get_job(self.session, "abc42")
-        job.created = datetime.datetime.now() - datetime.timedelta(10000)
+        job.created = datetime.datetime.utcnow() - datetime.timedelta(10000)
         update_job_results(self.session, "abc42", "results", "COMPLETED")
-        job.finished = datetime.datetime.now() - datetime.timedelta(10000)
+        job.finished = datetime.datetime.utcnow() - datetime.timedelta(10000)
         self.session.merge(job)
         purge_completed_jobs(self.session)
         jobs =  [x for x in get_jobs(self.session)]

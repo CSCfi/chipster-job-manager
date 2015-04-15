@@ -74,7 +74,7 @@ class Job(Base):
     def seconds_since(ts):
         if not ts:
             return None
-        td = datetime.datetime.now() - ts
+        td = datetime.datetime.utcnow() - ts
         return (td.microseconds + (td.seconds + td.days * 24 * 3600) * 10 ** 6) / 10 ** 6
 
     def seconds_since_created(self):
