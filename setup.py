@@ -1,13 +1,21 @@
 # coding=utf-8
-from distutils.core import setup
+from setuptools import setup
 setup(
-    name="Chipster Job Manager",
-    version='3.1.2',
+    name="chipster-job-manager",
+    version='3.1.6',
     description='Manages long running jobs on Chipster platform',
     license='MIT',
     author='Harri Hämäläinen',
     author_email='harri.hamalainen@csc.fi',
     packages=['jobmanager'],
+    install_requires=[
+        'flask',
+        'stompest',
+        'PyYAML',
+        'stompest.async',
+        'Twisted',
+        'sqlalchemy',
+    ],
     classifiers=[
         'Development Status :: 4 - Beta',
         'Environment :: Console',
